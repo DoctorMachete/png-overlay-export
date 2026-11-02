@@ -27,7 +27,7 @@ export folder (the script takes any `*.json` there for a ZMK layout export). Exi
 ## Build
 
 GitHub Actions (`.github/workflows/build.yml`) builds the Windows exe with PyInstaller (onedir) on a push
-to `main` that touches the engine, by hand, or on a `v*` tag (which also makes a Release). Each build also
+to `main` that touches the engine, by hand, or on a `v*` tag; a build of `main` publishes the Release named in `release.txt`. Each build also
 renders `ci/parity_page.drawio` with the real draw.io and with the exe and checks Windows' glyph answers
 for Helvetica; both reports are in the run's summary and its `checks` artifact.
 

@@ -2,13 +2,14 @@ name: build
 
 # The Windows exe (PyInstaller, onedir) and its checks against the real draw.io on Windows.
 # Runs on a push to main that touches the engine, by hand (Actions > build > Run workflow),
-# and on a v* tag, which also publishes a Release with the zipped exe.
+# and on a v* tag.  A build of main publishes (or updates) the Release named in release.txt,
+# tag included; a v0.x or v*-x version is a pre-release.
 on:
   workflow_dispatch:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['pyport/**', 'ci/**', 'requirements.txt', '.github/workflows/build.yml']
+    paths: ['pyport/**', 'ci/**', 'requirements.txt', 'release.txt', '.github/workflows/build.yml']
 
 permissions:
   contents: write          # the Release on a tag
@@ -102,10 +103,24 @@ jobs:
           path: png-overlay-export-windows.zip
           retention-days: 14
 
-      - name: Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Release version
+        id: rel
+        shell: pwsh
+        run: |
+          $v = if ("${{ github.ref }}".StartsWith('refs/tags/')) { "${{ github.ref_name }}" } else { (Get-Content release.txt -TotalCount 1).Trim() }
+          "tag=$v" >> $env:GITHUB_OUTPUT
+          "pre=$(($v.StartsWith('v0.') -or $v.Contains('-')).ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      - name: Release
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.rel.outputs.tag }}
           files: png-overlay-export-windows.zip
-          generate_release_notes: true
-          prerelease: ${{ startsWith(github.ref_name, 'v0.') || contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.rel.outputs.pre }}
+          body: |
+            The export engine for export_from_drawio_PY.ah2 (.149 and later), built from ${{ github.sha }}.
+            Unzip next to the script so that png-overlay-export\png-overlay-export.exe sits beside it.
+            Checks of this build (draw.io 30.0.1 vs the exe, Windows glyph coverage): see the run's summary.
