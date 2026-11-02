@@ -108,3 +108,4 @@ jobs:
         with:
           files: png-overlay-export-windows.zip
           generate_release_notes: true
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') || contains(github.ref_name, '-') }}
