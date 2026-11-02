@@ -1,0 +1,110 @@
+name: build
+
+# The Windows exe (PyInstaller, onedir) and its checks against the real draw.io on Windows.
+# Runs on a push to main that touches the engine, by hand (Actions > build > Run workflow),
+# and on a v* tag, which also publishes a Release with the zipped exe.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['pyport/**', 'ci/**', 'requirements.txt', '.github/workflows/build.yml']
+
+permissions:
+  contents: write          # the Release on a tag
+
+env:
+  DRAWIO_VERSION: '30.0.1' # the user's draw.io ([paths] DrawioExe)
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build the exe
+        run: >
+          pyinstaller --noconfirm --clean --onedir --console --name png-overlay-export
+          --paths pyport pyport/engine.py
+
+      - name: Smoke test
+        run: |
+          dist\png-overlay-export\png-overlay-export.exe --version
+          dist\png-overlay-export\png-overlay-export.exe export --help
+
+      - name: GDI glyph check (Helvetica = Arial)
+        run: |
+          dist\png-overlay-export\png-overlay-export.exe fontcheck Helvetica ci\arial_expect.txt > fontcheck.txt
+          python ci\compare_fonts.py ci\arial_expect.txt fontcheck.txt
+
+      - name: Cache draw.io
+        id: drawio
+        uses: actions/cache@v4
+        with:
+          path: drawio
+          key: drawio-${{ env.DRAWIO_VERSION }}-windows
+
+      - name: Download draw.io
+        if: steps.drawio.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $u = "https://github.com/jgraph/drawio-desktop/releases/download/v$env:DRAWIO_VERSION/draw.io-$env:DRAWIO_VERSION-windows.zip"
+          Invoke-WebRequest $u -OutFile drawio.zip
+          Expand-Archive drawio.zip -DestinationPath drawio
+          Remove-Item drawio.zip
+
+      - name: Render the test page with draw.io and with the exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $exe = (Get-ChildItem drawio -Recurse -Filter 'draw.io.exe' | Select-Object -First 1).FullName
+          Write-Host "draw.io: $exe"
+          $t = Measure-Command {
+            Start-Process -Wait -FilePath $exe -ArgumentList @('--disable-gpu', '--no-sandbox', '-x', '-f', 'png', '-t', '-s', '5',
+              '-o', "$PWD\out\drawio.png", "$PWD\ci\parity_page.drawio")
+          }
+          Write-Host ("draw.io CLI: {0:N1} s" -f $t.TotalSeconds)
+          $t = Measure-Command {
+            dist\png-overlay-export\png-overlay-export.exe render --drawio (Split-Path $exe) -s 5 -t ci\parity_page.drawio out\exe.png
+          }
+          Write-Host ("exe (browser start + 1 page): {0:N1} s" -f $t.TotalSeconds)
+          python ci\parity.py out\drawio.png out\exe.png out\side_by_side.png
+
+      - name: Upload the checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checks
+          path: |
+            out
+            fontcheck.txt
+          retention-days: 14
+
+      - name: Zip the exe
+        shell: pwsh
+        run: Compress-Archive -Path dist\png-overlay-export -DestinationPath png-overlay-export-windows.zip
+
+      - name: Upload the exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: png-overlay-export-windows
+          path: png-overlay-export-windows.zip
+          retention-days: 14
+
+      - name: Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: png-overlay-export-windows.zip
+          generate_release_notes: true
