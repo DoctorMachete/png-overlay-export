@@ -246,11 +246,19 @@ class Renderer:
         self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
         port_file = os.path.join(self.profile, 'DevToolsActivePort')
         t_end = time.time() + 30
-        while not (os.path.exists(port_file) and len(open(port_file).read().split()) >= 2):
+        found = None
+        while found is None:
+            try:
+                parts = open(port_file).read().split() if os.path.exists(port_file) else []
+                if len(parts) >= 2:
+                    found = parts[:2]
+                    break
+            except OSError:                              # Windows: Edge is still writing it
+                pass
             if time.time() > t_end or self.proc.poll() is not None:
                 raise RuntimeError('the browser did not start: ' + exe)
             time.sleep(0.05)
-        port, path = open(port_file).read().split()[:2]
+        port, path = found
         self.cdp = CDP(f'ws://127.0.0.1:{port}{path}')
         self.url = f'http://127.0.0.1:{self.port}/export3.html'
         # two tabs take turns: one renders while the other loads a fresh page
