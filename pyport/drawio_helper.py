@@ -191,6 +191,20 @@ def find_browser(given=None):
             return c
     raise FileNotFoundError('No Edge or Chrome found; pass --browser')
 
+def _shrink(im, W, H):
+    """The 2x screenshot down to W x H as an area average on premultiplied pixels (a plain 2 x 2
+    mean).  Lanczos rang past every edge: faint alpha one AlphaBox step outside the artwork,
+    so the shared box grew by 4 px; this gives draw.io's own box."""
+    import numpy as np, cv2
+    from PIL import Image
+    f = np.asarray(im).astype(np.float32) / 255
+    f[..., :3] *= f[..., 3:4]
+    f = cv2.resize(f, (W, H), interpolation=cv2.INTER_AREA)
+    a = f[..., 3:4]
+    c = np.where(a > 1e-6, f[..., :3] / np.maximum(a, 1e-6), 0)
+    return Image.fromarray(np.clip(np.concatenate([c, a], -1) * 255 + 0.5, 0, 255).astype(np.uint8), 'RGBA')
+
+
 class Renderer:
     def __init__(self, drawio, browser=None):
         self.web = webapp_dir(drawio)
@@ -274,7 +288,7 @@ class Renderer:
         im = Image.open(io.BytesIO(base64.b64decode(shot['data'])))
         im.load()
         if im.size != (W, H):
-            im = im.resize((W, H), Image.LANCZOS)
+            im = _shrink(im.convert('RGBA'), W, H)
         out = io.BytesIO()
         im.save(out, 'PNG', compress_level=1)
         self._load()                     # the next page loads while the caller works on this one

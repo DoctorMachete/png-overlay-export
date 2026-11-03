@@ -23,19 +23,35 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.1.2 (2025-07-30.148)'
+VERSION = 'py-0.1.3 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
 class Progress:
-    def __init__(self, path=None):
-        self.path = path
+    """The progress file for AHK, plus a log: every line and event with the time since the start
+    (log_path, appended; for finding where a run spends its time)."""
+    def __init__(self, path=None, log_path=None):
+        self.path, self.t0, self.logf = path, time.time(), None
+        if log_path:
+            try:
+                self.logf = open(log_path, 'w', encoding='utf-8', buffering=1)
+                self.log(f'{VERSION}  {time.strftime("%Y-%m-%d %H:%M:%S")}  {" ".join(sys.argv[1:])}')
+            except OSError:
+                self.logf = None
+
+    def log(self, text):
+        if self.logf:
+            try:
+                self.logf.write(f'{time.time() - self.t0:8.2f}  {text}\n')
+            except OSError:
+                pass
 
     def say(self, text, pct=None):
         """The latest line for AHK.  Never stops the run: on Windows the swap fails while AHK
         has the file open to read it (it polls 5 times a second), so it is retried briefly
         and otherwise skipped - the next line will get through."""
         line = ('' if pct is None else str(pct)) + '\t' + text.replace('\n', ' | ')
+        self.log(line.replace('\t', '  '))
         try:
             print(line, flush=True)
         except Exception:                                # noqa: BLE001 - no console
@@ -67,8 +83,9 @@ def run_time(sec):
 class Exporter:
     """ExportPng through the draw.io helper (one browser for the run, started on first use).
     With Debug on, the page is also kept as <out>.drawio (.148)."""
-    def __init__(self, cfg, drawio):
+    def __init__(self, cfg, drawio, log=None):
         self.cfg, self.drawio, self.r, self.n = cfg, drawio, None, 0
+        self.log = log or (lambda t: None)
 
     def __call__(self, page, out_png, label=''):
         import drawio_helper as DH
@@ -79,9 +96,13 @@ class Exporter:
         err = None
         for attempt in range(2):                         # one plain retry, as TryExportPng
             try:
+                t = time.time()
                 if self.r is None:
                     self.r = DH.Renderer(self.drawio)
+                    self.log(f'    browser started in {time.time() - t:.2f} s')
+                    t = time.time()
                 png = self.r.render(xml, scale=self.cfg.scale, transparent=True)
+                self.log(f'    draw.io {time.time() - t:5.2f} s  {os.path.basename(out_png)}  ({label})')
                 tmp = out_png + '.part'
                 with open(tmp, 'wb') as f:
                     f.write(png)
@@ -90,6 +111,8 @@ class Exporter:
                 return
             except Exception as e:                       # noqa: BLE001 - reported below
                 err = e
+                self.log(f'    draw.io FAILED after {time.time() - t:.2f} s, attempt {attempt + 1}: '
+                         f'{type(e).__name__}: {e}  {os.path.basename(out_png)}')
                 if self.r is not None:
                     self.r.close()
                     self.r = None
@@ -454,6 +477,8 @@ def main(argv=None):
 
     res = {'ok': False, 'message': '', 'line': '', 'warnings': [], 'images': 0, 'mirrored': 0}
     code, exporter = 0, None
+    ui = Progress(a.progress, os.path.join(os.path.dirname(os.path.abspath(a.result)), 'png_overlay_log.txt')
+                  if a.result else None)
     try:
         base = os.path.dirname(os.path.abspath(a.ini))
         cfg = config.Cfg(a.ini, base_dir=base)
@@ -462,19 +487,22 @@ def main(argv=None):
         LY.target_set(cfg, a.layout)
         shapes = RS.Shapes(RS.Script(a.ahk), cfg.capmodel_dir, cfg.render_shape)
         drawio = a.drawio or os.path.dirname(cfg.ini.read('paths', 'DrawioExe', ''))
-        exporter = Exporter(cfg, drawio)
+        exporter = Exporter(cfg, drawio, ui.log)
         sel = {int(t) for t in a.layers.replace(' ', ',').split(',') if t.strip().isdigit()}
-        msg, line, warn, total, mir = export(cfg, shapes, exporter, Progress(a.progress), sel, a.recomp,
+        msg, line, warn, total, mir = export(cfg, shapes, exporter, ui, sel, a.recomp,
                                              a.all_run, a.last or not a.all_run, a.last_bak, a.label,
                                              (a.result, a.progress))
         res.update(ok=True, message=msg, line=line, warnings=warn, images=total, mirrored=mir)
     except M.Die as d:
         res['message'], code = str(d), 2
-    except Exception:                                    # noqa: BLE001
-        res['message'], code = 'Unexpected error - please report it:\n\n' + traceback.format_exc(), 1
+    except Exception as e:                               # noqa: BLE001
+        # the error itself first: the script shows only the start of the message
+        res['message'], code = (f'Unexpected error - please report it: {type(e).__name__}: {e}\n\n'
+                                + traceback.format_exc()), 1
     finally:
         if exporter is not None:
             exporter.close()
+    ui.log(f'exit {code}' + ('' if res['ok'] else ': ' + res['message']))
     if a.result:
         with open(a.result, 'w', encoding='utf-8') as f:
             json.dump(res, f, ensure_ascii=False, indent=1)
