@@ -68,6 +68,15 @@ jobs:
           Expand-Archive drawio.zip -DestinationPath drawio
           Remove-Item drawio.zip
 
+      - name: Helper variants (report only)
+        continue-on-error: true
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $exe = (Get-ChildItem drawio -Recurse -Filter 'draw.io.exe' | Select-Object -First 1).FullName
+          ./ci/helper_variants.ps1 -Exe dist\png-overlay-export\png-overlay-export.exe -Drawio (Split-Path $exe)
+
       - name: Render the test page with draw.io and with the exe
         shell: pwsh
         run: |

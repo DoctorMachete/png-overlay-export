@@ -214,16 +214,22 @@ class Renderer:
         self.http, self.port = serve_dir(self.web)
         self.profile = tempfile.mkdtemp(prefix='poe-edge-')
         exe = find_browser(browser)
+        # POE_FLAGS=0 / POE_WAKE=0 / POE_FRONT=0 switch the anti-throttling measures off one by one
+        # (to compare them on Windows; see ci/helper_variants.ps1)
+        self.opt = {k: os.environ.get('POE_' + k, '1') != '0' for k in ('FLAGS', 'WAKE', 'FRONT')}
         args = [exe, '--headless=new', '--remote-debugging-port=0', f'--user-data-dir={self.profile}',
                 '--no-first-run', '--no-default-browser-check', '--disable-extensions',
                 '--hide-scrollbars', '--mute-audio', '--disable-gpu', '--force-color-profile=srgb',
-                '--disable-background-networking', '--disable-renderer-backgrounding',
+                '--disable-background-networking', '--disable-renderer-backgrounding']
+        if self.opt['FLAGS']:
+            args += [
                 # never throttle, freeze or sleep a tab: the two tabs take turns, so one is always
                 # "in the background" (one page in a hundred hung for 120 s on the user's PC)
                 '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
                 '--disable-features=msSleepingTabs,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion',
                 '--disable-ipc-flooding-protection', '--disable-hang-monitor', '--noerrdialogs',
-                '--disable-component-update', '--disable-sync', '--disable-default-apps', 'about:blank']
+                '--disable-component-update', '--disable-sync', '--disable-default-apps']
+        args.append('about:blank')
         if sys.platform != 'win32':
             args.insert(1, '--no-sandbox')
         flags = 0x08000000 if sys.platform == 'win32' else 0          # CREATE_NO_WINDOW
@@ -251,6 +257,8 @@ class Renderer:
 
     def _wake(self, sid):
         """The tab as if in front and focused, never frozen."""
+        if not self.opt['WAKE']:
+            return
         for m, prm in (('Page.setWebLifecycleState', {'state': 'active'}),
                        ('Emulation.setFocusEmulationEnabled', {'enabled': True})):
             try:
@@ -313,8 +321,15 @@ class Renderer:
         if transparent:
             self.cdp.call('Emulation.setDefaultBackgroundColorOverride',
                           {'color': {'r': 0, 'g': 0, 'b': 0, 'a': 0}}, session=self.sid)
-        shot = self.cdp.call('Page.captureScreenshot', {'format': 'png', 'optimizeForSpeed': True},
-                             session=self.sid)
+        try:
+            if self.opt['FRONT']:
+                # the tab that is drawn is brought to the front: a background tab may not be
+                # painted, and its screenshot then never comes
+                self.cdp.call('Page.bringToFront', session=self.sid, timeout=20)
+            shot = self.cdp.call('Page.captureScreenshot', {'format': 'png', 'optimizeForSpeed': True},
+                                 session=self.sid)
+        except Exception as e:
+            raise RuntimeError(f'screenshot: {type(e).__name__}: {e}') from e
         im = Image.open(io.BytesIO(base64.b64decode(shot['data'])))
         im.load()
         if im.size != (W, H):
