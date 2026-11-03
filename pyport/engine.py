@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.1 (2025-07-30.148)'
+VERSION = 'py-0.2.2 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -412,7 +412,11 @@ def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False
                 jobs.append((role, raw))
         if jobs:
             tasks.append((L['idx'], jobs))
-    W = Workers(workers if len(tasks) > 1 else 1, C, spec, ui)
+    # workers only when either pass has more than one layer to do
+    W = Workers(workers if max(len(tasks), len(selected | recomp)) > 1 else 1, C, spec, ui)
+    used = W.n
+    wtxt = f'with {used} worker' + ('s' if used != 1 else '') + (
+        f' ({workers} set, only 1 layer to do)' if used < workers else '')
     try:
         def say1(k, n, idx, finished):
             ui.say(f'({k}/{n})  {names[idx]}' + (' drawn' if finished else '\nrendering'),
@@ -529,14 +533,14 @@ def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False
     el = time.time() - t0
     fgd = cfg.out_dir('foreground') + os.sep
     line = (f"{label or cfg.lay_name}: {total} images" + (f' + {mir_n} mirrored layer(s)' if mir_n else '')
-            + f' in {run_time(el)}, {cw + pr} x {ch + pb} px, {fgd}')
+            + f' in {run_time(el)} {wtxt}, {cw + pr} x {ch + pb} px, {fgd}')
     if cs_info:
         line += '\n    cheat sheet ' + S.cs_img_out(cfg)
     if bak_zip:
         line += f'\n    backup of {bak_n} layer(s): {bak_zip}'
     line += ''.join('\n    - ' + w for w in warn)
     style_changed = style_now != style_was
-    msg = (f'Time: {run_time(el)}\nLayout {cfg.lay_name}, key style {LY.render_style_name(style_now)}'
+    msg = (f'Time: {run_time(el)} {wtxt}\nLayout {cfg.lay_name}, key style {LY.render_style_name(style_now)}'
            + (' - its settings changed; layers not exported yet stay marked' if style_changed else '')
            + '\nShadow: foreground' + (' and background' if cfg.sh_on_bg else ' only')
            + (' - changed, every background re-composited' if bg_sh_now != bg_sh_was else '')
