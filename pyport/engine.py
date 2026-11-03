@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.2 (2025-07-30.148)'
+VERSION = 'py-0.2.3 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -533,7 +533,7 @@ def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False
     el = time.time() - t0
     fgd = cfg.out_dir('foreground') + os.sep
     line = (f"{label or cfg.lay_name}: {total} images" + (f' + {mir_n} mirrored layer(s)' if mir_n else '')
-            + f' in {run_time(el)} {wtxt}, {cw + pr} x {ch + pb} px, {fgd}')
+            + f' in {run_time(el)}' + ('' if all_run else ' ' + wtxt) + f', {cw + pr} x {ch + pb} px, {fgd}')
     if cs_info:
         line += '\n    cheat sheet ' + S.cs_img_out(cfg)
     if bak_zip:
@@ -562,7 +562,7 @@ def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False
         msg += f"\n\nCheat sheet: {cs_info['w']} x {cs_info['h']} px\n{S.cs_img_out(cfg)}"
     if warn:
         msg += f'\n\n{len(warn)} warning(s):\n' + ''.join(f'  - {w}\n' for w in warn)
-    return msg, line, warn, total, mir_n
+    return msg, line, warn, total, mir_n, used
 
 
 # ------------------------------------------------------------------- the CLI
@@ -647,10 +647,10 @@ def main(argv=None):
         spec = {'ini': os.path.abspath(a.ini), 'base': base, 'ahk': os.path.abspath(a.ahk), 'layout': a.layout,
                 'drawio': drawio, 'test_arial': sorted(FN.NOT_COVERED.get('Helvetica', ()))}
         ui.log(f'workers: {nw}')
-        msg, line, warn, total, mir = export(cfg, shapes, exporter, ui, sel, a.recomp,
+        msg, line, warn, total, mir, used = export(cfg, shapes, exporter, ui, sel, a.recomp,
                                              a.all_run, a.last or not a.all_run, a.last_bak, a.label,
                                              (a.result, a.progress), nw, spec)
-        res.update(ok=True, message=msg, line=line, warnings=warn, images=total, mirrored=mir)
+        res.update(ok=True, message=msg, line=line, warnings=warn, images=total, mirrored=mir, workers=used)
     except M.Die as d:
         res['message'], code = str(d), 2
     except Exception as e:                               # noqa: BLE001
