@@ -214,9 +214,11 @@ class Renderer:
         self.http, self.port = serve_dir(self.web)
         self.profile = tempfile.mkdtemp(prefix='poe-edge-')
         exe = find_browser(browser)
-        # POE_FLAGS=0 / POE_WAKE=0 / POE_FRONT=0 switch the anti-throttling measures off one by one
-        # (to compare them on Windows; see ci/helper_variants.ps1)
-        self.opt = {k: os.environ.get('POE_' + k, '1') != '0' for k in ('FLAGS', 'WAKE', 'FRONT')}
+        # The anti-throttling measures, each switchable for ci/helper_variants.ps1 (POE_<name>=0/1).
+        # On Windows (CI): WAKE (lifecycle 'active' + focus emulation) without FRONT stops the
+        # screenshot coming at all, and with it is slower: off.  FLAGS and FRONT work: on.
+        dflt = {'FLAGS': '1', 'WAKE': '0', 'FRONT': '1'}
+        self.opt = {k: os.environ.get('POE_' + k, d) != '0' for k, d in dflt.items()}
         args = [exe, '--headless=new', '--remote-debugging-port=0', f'--user-data-dir={self.profile}',
                 '--no-first-run', '--no-default-browser-check', '--disable-extensions',
                 '--hide-scrollbars', '--mute-audio', '--disable-gpu', '--force-color-profile=srgb',
