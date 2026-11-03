@@ -72,8 +72,11 @@ class _Quiet(http.server.SimpleHTTPRequestHandler):
 
 def serve_dir(d):
     h = functools.partial(_Quiet, directory=d)
-    s = socketserver.ThreadingTCPServer(('127.0.0.1', 0), h)
-    s.daemon_threads = True
+    class _Server(socketserver.ThreadingTCPServer):
+        request_queue_size = 128          # Edge opens many connections at once (two tabs loading);
+                                          # the default backlog of 5 can drop some, which then stall
+        daemon_threads = True
+    s = _Server(('127.0.0.1', 0), h)
     threading.Thread(target=s.serve_forever, daemon=True).start()
     return s, s.server_address[1]
 
@@ -82,7 +85,7 @@ class WS:
     """RFC 6455 client: enough for CDP (text frames, masked, no extensions)."""
     def __init__(self, url):
         u = urlparse(url)
-        self.s = socket.create_connection((u.hostname, u.port), timeout=120)
+        self.s = socket.create_connection((u.hostname, u.port), timeout=30)   # no message from Edge for 30 s = stuck
         key = base64.b64encode(os.urandom(16)).decode()
         self.s.sendall((f'GET {u.path} HTTP/1.1\r\nHost: {u.hostname}:{u.port}\r\n'
                         f'Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n'
@@ -214,7 +217,13 @@ class Renderer:
         args = [exe, '--headless=new', '--remote-debugging-port=0', f'--user-data-dir={self.profile}',
                 '--no-first-run', '--no-default-browser-check', '--disable-extensions',
                 '--hide-scrollbars', '--mute-audio', '--disable-gpu', '--force-color-profile=srgb',
-                '--disable-background-networking', '--disable-renderer-backgrounding', 'about:blank']
+                '--disable-background-networking', '--disable-renderer-backgrounding',
+                # never throttle, freeze or sleep a tab: the two tabs take turns, so one is always
+                # "in the background" (one page in a hundred hung for 120 s on the user's PC)
+                '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
+                '--disable-features=msSleepingTabs,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion',
+                '--disable-ipc-flooding-protection', '--disable-hang-monitor', '--noerrdialogs',
+                '--disable-component-update', '--disable-sync', '--disable-default-apps', 'about:blank']
         if sys.platform != 'win32':
             args.insert(1, '--no-sandbox')
         flags = 0x08000000 if sys.platform == 'win32' else 0          # CREATE_NO_WINDOW
@@ -235,9 +244,19 @@ class Renderer:
             tid = self.cdp.call('Target.createTarget', {'url': 'about:blank'})['targetId']
             sid = self.cdp.call('Target.attachToTarget', {'targetId': tid, 'flatten': True})['sessionId']
             self.cdp.call('Page.enable', session=sid)
+            self._wake(sid)
             self.tabs.append(sid)
             self.sid = sid
             self._load()
+
+    def _wake(self, sid):
+        """The tab as if in front and focused, never frozen."""
+        for m, prm in (('Page.setWebLifecycleState', {'state': 'active'}),
+                       ('Emulation.setFocusEmulationEnabled', {'enabled': True})):
+            try:
+                self.cdp.call(m, prm, session=sid, timeout=10)
+            except Exception:                            # noqa: BLE001 - an older browser
+                pass
 
     def _load(self):
         """Start loading a fresh export3.html (one render() each); not waited for
@@ -261,18 +280,29 @@ class Renderer:
         from PIL import Image
         self.sid = self.tabs[self.turn]
         self.turn = (self.turn + 1) % len(self.tabs)
-        if self.loading.get(self.sid):
-            self.cdp.wait_event('Page.loadEventFired', self.sid)
-            self.loading[self.sid] = False
-        # wait for the shapes: export.js renders at once when shapesLoaded
-        self.eval("new Promise(r => { const t = () => (typeof render == 'function') ? r(1) : setTimeout(t, 10); t(); })")
-        data = {'xml': xml, 'format': 'png', 'scale': scale, 'border': border,
-                'bg': 'none' if transparent else '#ffffff', 'w': 0, 'h': 0, 'from': 0, 'to': 0}
-        self.eval(f'render({json.dumps(data)}); 1')
-        b = self.eval("new Promise((r, j) => { const t0 = Date.now(); const t = () => {"
-                      " const e = document.getElementById('LoadingComplete');"
-                      " if (e) r(e.getAttribute('bounds')); else if (Date.now() - t0 > 60000) j('timeout');"
-                      " else setTimeout(t, 10); }; t(); })")
+        stage = 'start'
+        try:
+            stage = 'waking the tab'
+            self._wake(self.sid)
+            if self.loading.get(self.sid):
+                stage = 'loading export3.html'
+                self.cdp.wait_event('Page.loadEventFired', self.sid, timeout=20)
+                self.loading[self.sid] = False
+            # wait for the shapes: export.js renders at once when shapesLoaded
+            stage = "waiting for draw.io's render()"
+            self.eval("new Promise((r, j) => { const t0 = Date.now(); const t = () => (typeof render == 'function')"
+                      " ? r(1) : (Date.now() - t0 > 20000) ? j('no render() after 20 s') : setTimeout(t, 10); t(); })")
+            data = {'xml': xml, 'format': 'png', 'scale': scale, 'border': border,
+                    'bg': 'none' if transparent else '#ffffff', 'w': 0, 'h': 0, 'from': 0, 'to': 0}
+            stage = 'render()'
+            self.eval(f'render({json.dumps(data)}); 1')
+            stage = 'waiting for #LoadingComplete'
+            b = self.eval("new Promise((r, j) => { const t0 = Date.now(); const t = () => {"
+                          " const e = document.getElementById('LoadingComplete');"
+                          " if (e) r(e.getAttribute('bounds')); else if (Date.now() - t0 > 25000) j('no LoadingComplete after 25 s');"
+                          " else setTimeout(t, 10); }; t(); })")
+        except Exception as e:
+            raise RuntimeError(f'{stage}: {type(e).__name__}: {e}') from e
         bounds = json.loads(b)
         if bounds is None or bounds['width'] < 5 or bounds['height'] < 5:
             raise RuntimeError('draw.io rendered an empty page')

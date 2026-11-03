@@ -31,11 +31,10 @@ def save(img, path):
 
 def draw_on_empty(img):
     """Gdip.Draw of img 1:1 onto a new (transparent) bitmap."""
-    out = img.copy()
-    a = out[..., 3]
-    part = (a > 0) & (a < 255)
-    a[part] -= 1
-    out[a == 0] = 0
+    a = img[..., 3]
+    a2 = a - ((a > 0) & (a < 255)).astype(np.uint8)       # partial alpha one level down
+    out = img * (a2 > 0)[..., None].astype(np.uint8)      # fully transparent pixels: all 0
+    out[..., 3] = a2
     return out
 
 
@@ -62,7 +61,8 @@ def fill_coverage(polys, w, h, ss=4):
     pl = [np.round((np.asarray(p, np.float64) * ss - 0.5) * 16).astype(np.int32) for p in polys]
     if pl:
         cv2.fillPoly(cov, pl, 255, lineType=cv2.LINE_8, shift=4)
-    return cov.reshape(h, ss, w, ss).mean(axis=(1, 3)) / 255
+    # the mean of each ss x ss block (an area resize by a whole factor is exactly that)
+    return cv2.resize(cov.astype(np.float32), (w, h), interpolation=cv2.INTER_AREA) / 255
 
 
 def clip_mask(polys, w, h):

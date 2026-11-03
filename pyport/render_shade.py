@@ -299,15 +299,28 @@ GAMMA = 2.2  # GDI+ CompositingQualityHighQuality blends in linear light (1 = pl
 
 def blend(sub, top):
     """Source-over of premultiplied top onto premultiplied sub (in place), as GDI+
-    with CompositingQualityHighQuality: colours blended in linear light."""
+    with CompositingQualityHighQuality: colours blended in linear light.  Only the pixels where
+    a partly transparent top meets a drawn sub need that; elsewhere the result is the sub
+    (top empty) or the top itself (top opaque, or sub empty), so the gamma maths runs on those
+    few pixels only (same result, several times faster on a whole canvas)."""
     if GAMMA == 1:
         sub[:] = top + sub * (1 - top[..., 3:4]); return
-    ta, da = top[..., 3:4], sub[..., 3:4]
-    tc = np.where(ta > 0, top[..., :3] / np.maximum(ta, 1e-6), 0) ** GAMMA
-    dc = np.where(da > 0, sub[..., :3] / np.maximum(da, 1e-6), 0) ** GAMMA
-    oa = ta + da * (1 - ta)
-    oc = np.where(oa > 0, (tc * ta + dc * da * (1 - ta)) / np.maximum(oa, 1e-6), 0) ** (1 / GAMMA)
-    sub[..., :3] = oc * oa; sub[..., 3:4] = oa
+    ta, da = top[..., 3], sub[..., 3]
+    m = ta > 0
+    if not m.any():
+        return
+    plain = m & ((ta >= 1) | (da <= 0))
+    sub[plain] = top[plain]
+    mix = m & ~plain
+    if not mix.any():
+        return
+    t, d = top[mix], sub[mix]                     # n x 4
+    ta1, da1 = t[:, 3:4], d[:, 3:4]
+    tc = (t[:, :3] / ta1) ** GAMMA
+    dc = (d[:, :3] / da1) ** GAMMA
+    oa = ta1 + da1 * (1 - ta1)
+    oc = ((tc * ta1 + dc * da1 * (1 - ta1)) / oa) ** (1 / GAMMA)
+    sub[mix] = np.concatenate([oc * oa, oa], 1)
 
 def premul(img_u8):
     f = img_u8.astype(np.float32) / 255
