@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.1 (2025-07-30.148)'
+VERSION = 'py-0.1.1 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -32,13 +32,25 @@ class Progress:
         self.path = path
 
     def say(self, text, pct=None):
+        """The latest line for AHK.  Never stops the run: on Windows the swap fails while AHK
+        has the file open to read it (it polls 5 times a second), so it is retried briefly
+        and otherwise skipped - the next line will get through."""
         line = ('' if pct is None else str(pct)) + '\t' + text.replace('\n', ' | ')
-        print(line, flush=True)
-        if self.path:
-            tmp = self.path + '.part'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                f.write(line)
-            os.replace(tmp, self.path)
+        try:
+            print(line, flush=True)
+        except Exception:                                # noqa: BLE001 - no console
+            pass
+        if not self.path:
+            return
+        tmp = self.path + '.part'
+        for _ in range(10):
+            try:
+                with open(tmp, 'w', encoding='utf-8') as f:
+                    f.write(line)
+                os.replace(tmp, self.path)
+                return
+            except OSError:
+                time.sleep(0.02)
 
 
 def run_time(sec):

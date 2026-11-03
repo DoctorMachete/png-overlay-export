@@ -44,6 +44,9 @@ jobs:
           dist\png-overlay-export\png-overlay-export.exe --version
           dist\png-overlay-export\png-overlay-export.exe export --help
 
+      - name: Progress file under AHK's polling
+        run: python ci\progress_lock.py
+
       - name: GDI glyph check (Helvetica = Arial)
         run: |
           dist\png-overlay-export\png-overlay-export.exe fontcheck Helvetica ci\arial_expect.txt > fontcheck.txt

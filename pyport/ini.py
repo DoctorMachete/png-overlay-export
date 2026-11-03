@@ -43,7 +43,17 @@ class Ini:
         tmp = self.path + '.tmp~'
         with open(tmp, 'wb') as f:
             f.write(self._bom + t.encode(self._enc))
-        os.replace(tmp, self.path)
+        # Windows refuses the swap while another program has the INI open for a moment
+        # (an editor, a virus scan): retried for up to ~2 s before giving up
+        import time
+        for i in range(40):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if i == 39:
+                    raise
+                time.sleep(0.05)
 
     @staticmethod
     def _span(lines, section):
