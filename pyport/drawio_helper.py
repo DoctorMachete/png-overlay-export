@@ -17,7 +17,7 @@ Usage:
       POST /export {"in":..., "out":..., "scale":5, "transparent":true} -> 200 / 500 text
       GET /quit
 """
-import argparse, base64, functools, hashlib, http.server, io, json, math, os, socket, \
+import argparse, base64, glob, functools, hashlib, http.server, io, json, math, os, socket, \
     socketserver, struct, subprocess, sys, tempfile, threading, time, shutil
 from urllib.parse import urlparse
 
@@ -212,6 +212,13 @@ class Renderer:
     def __init__(self, drawio, browser=None):
         self.web = webapp_dir(drawio)
         self.http, self.port = serve_dir(self.web)
+        # profiles left by runs that were killed (older than 6 h): cleared
+        try:
+            for d in glob.glob(os.path.join(tempfile.gettempdir(), 'poe-edge-*')):
+                if time.time() - os.path.getmtime(d) > 6 * 3600:
+                    shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
         self.profile = tempfile.mkdtemp(prefix='poe-edge-')
         exe = find_browser(browser)
         # The anti-throttling measures, each switchable for ci/helper_variants.ps1 (POE_<name>=0/1).
@@ -234,7 +241,8 @@ class Renderer:
         args.append('about:blank')
         if sys.platform != 'win32':
             args.insert(1, '--no-sandbox')
-        flags = 0x08000000 if sys.platform == 'win32' else 0          # CREATE_NO_WINDOW
+        # CREATE_NO_WINDOW, and below normal priority: the user's own work comes first
+        flags = (0x08000000 | 0x00004000) if sys.platform == 'win32' else 0
         self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
         port_file = os.path.join(self.profile, 'DevToolsActivePort')
         t_end = time.time() + 30

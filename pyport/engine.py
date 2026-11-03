@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.1.4 (2025-07-30.148)'
+VERSION = 'py-0.2.0 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -206,8 +206,147 @@ class Run:
         return True
 
 
+# ------------------------------------------------------------ per-layer work
+class Ctx:
+    """What a layer's work needs: the run's cfg, shapes, Run (pages, draw.io), source, combos and
+    layers.  The main process has one; each worker process builds its own (_w_init)."""
+    def __init__(self, cfg, shapes, R, src, layout, layers):
+        self.cfg, self.shapes, self.R, self.src, self.layout = cfg, shapes, R, src, layout
+        self.layers = {L['idx']: L for L in layers}
+
+
+def layer_pass1(C, idx, jobs):
+    """Pass 1 for one layer: jobs = [(role, raw png)] to draw (shaded / bent as needed).
+    Returns ({'idx|role': box or None}, warnings)."""
+    L, warn, ext = C.layers[idx], [], {}
+    tag = f"{L['idx']}. {L['name']}"
+    for role, raw in jobs:
+        if not C.R.render_bg(L, C.layout, warn, raw, tag, C.src, role):
+            warn.append(f'layer {tag}: the Render shading was left out - its image is not the size '
+                        'the page frame gives at this zoom.')
+        ext[f'{idx}|{role}'] = IM.alpha_box(IM.load(raw))
+    return ext, warn
+
+
+def layer_pass2(C, idx, box, pr, pb, o):
+    """Pass 2 for one layer: its background / foreground (and cheat-sheet copy), the
+    testalignment copies, its mirrored layer.  o: raw_dir, ta_dir, split_cs, in_cs, in_grid,
+    mirror (key map or None), cm.  Returns (warnings, mirrored made)."""
+    cfg, R, src, shapes = C.cfg, C.R, C.src, C.shapes
+    L, warn = C.layers[idx], []
+    tag, raw_dir = f"{L['idx']}. {L['name']}", o['raw_dir']
+    bg, fg = os.path.join(raw_dir, f'bg_{idx}.png'), os.path.join(raw_dir, f'fg_{idx}.png')
+    bg_out = os.path.join(cfg.out_dir('background'), f'{idx}.png')
+    fg_out = os.path.join(cfg.out_dir('foreground'), f'{idx}.png')
+    sh_k = IM.shadow_keys(cfg, src, L, shapes) if cfg.sh_fullkeys else None
+    rk = SH.render_items(cfg, src, L, 'rings') if cfg.key_style == 'render' else None
+    bgg = os.path.join(raw_dir, f'bgg_{idx}.png')
+    R.compose(bgg if (cfg.glass_bg_split() and os.path.exists(bgg)) else bg, None, bg_out, box, pr, pb,
+              cfg.sh_on_bg, sh_k)
+    R.compose(bg, fg, fg_out, box, pr, pb, True, sh_k, rk)
+    cs_out = os.path.join(cfg.out_dir('cheatsheet'), f'{idx}.png')
+    if o['split_cs'] and o['in_cs']:
+        cs = os.path.join(raw_dir, f'cs_{idx}.png')
+        if os.path.exists(cs):
+            R.compose(bg, cs, cs_out, box, pr, pb, True,
+                      IM.shadow_keys(cfg, src, L, shapes, True) if o['in_grid'] else sh_k, rk)
+    elif o['in_grid']:
+        R.compose(bg, fg, cs_out, box, pr, pb, True, IM.shadow_keys(cfg, src, L, shapes, True), rk)
+    if cfg.debug_export:
+        shutil.copyfile(bg_out, os.path.join(o['ta_dir'], f'{idx}b.png'))
+        shutil.copyfile(fg_out, os.path.join(o['ta_dir'], f'{idx}f.png'))
+    made = False
+    if o['mirror'] is not None:
+        made = R.mirror_layer(L, o['mirror'], C.layout, warn, raw_dir, box, pr, pb, tag, o['cm'])
+    else:
+        for kind in ('background', 'foreground'):
+            try:
+                os.remove(os.path.join(cfg.out_dir(kind), f'{idx}m.png'))
+            except OSError:
+                pass
+    return warn, made
+
+
+# ------------------------------------------------------- the worker processes
+def _low_priority():
+    """This process below normal priority (Windows), so the user's own work comes first."""
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.SetPriorityClass(k.GetCurrentProcess(), 0x4000)       # BELOW_NORMAL_PRIORITY_CLASS
+        except Exception:                                # noqa: BLE001
+            pass
+
+
+_W = None
+
+
+def _w_init(spec):
+    """A worker's own run context (it cannot share the main process's XML or browser)."""
+    global _W
+    import atexit
+    _low_priority()
+    if spec.get('test_arial'):                           # tests off Windows: the stand-in for GDI
+        import fonts as FN
+        FN.NOT_COVERED['Helvetica'] = set(spec['test_arial'])
+    cfg = config.Cfg(spec['ini'], base_dir=spec['base'])
+    LY.target_set(cfg, spec['layout'])
+    shapes = RS.Shapes(RS.Script(spec['ahk']), cfg.capmodel_dir, cfg.render_shape)
+    logs = []
+    exporter = Exporter(cfg, spec['drawio'], lambda t: logs.append(t))
+    atexit.register(exporter.close)
+    src = M.Doc(M.load_xml(cfg.src_drawio))
+    layout = CB.load_combo_data(cfg.combo_cache) if os.path.exists(cfg.combo_cache) else {'combos': []}
+    R = Run(cfg, shapes, exporter, Progress())
+    _W = (Ctx(cfg, shapes, R, src, layout, M.discover(src, [], {})), logs)
+
+
+def _w_call(what, *args):
+    C, logs = _W
+    logs.clear()
+    t = time.time()
+    r = (layer_pass1 if what == 1 else layer_pass2)(C, *args)
+    return r, list(logs), time.time() - t, os.getpid()
+
+
+class Workers:
+    """n worker processes taking whole layers; n = 1: everything in this process, in order."""
+    def __init__(self, n, C, spec, ui):
+        self.n, self.C, self.ui, self.pool = n, C, ui, None
+        if n > 1:
+            import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+            self.pool = ProcessPoolExecutor(n, mp_context=multiprocessing.get_context('spawn'),
+                                            initializer=_w_init, initargs=(spec,))
+
+    def run(self, what, tasks, say):
+        """tasks: [(idx, args...)]; say(k, n, idx) after each; returns {idx: result}."""
+        out = {}
+        if self.pool is None:
+            for k, t in enumerate(tasks, 1):
+                say(k - 1, len(tasks), t[0], False)
+                out[t[0]] = (layer_pass1 if what == 1 else layer_pass2)(self.C, *t)
+            return out
+        from concurrent.futures import as_completed
+        fut = {self.pool.submit(_w_call, what, *t): t[0] for t in tasks}
+        for k, f in enumerate(as_completed(fut), 1):
+            r, logs, dt, pid = f.result()                 # an error in a worker is raised here
+            for line in logs:
+                self.ui.log(f'    [{pid}] {line.strip()}')
+            self.ui.log(f'    [{pid}] layer {fut[f]} pass {what} done in {dt:.2f} s')
+            out[fut[f]] = r
+            say(k, len(tasks), fut[f], True)
+        return out
+
+    def close(self):
+        if self.pool is not None:
+            self.pool.shutdown(wait=True, cancel_futures=True)
+            self.pool = None
+
+
 def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False, last=True, last_bak='',
-           label=None, ignore=()):
+           label=None, ignore=(), workers=1, spec=None):
     """Main after the picker.  selected: the layer indices to export.  Returns (message, line,
     warnings, images, mirrored)."""
     t0 = time.time()
@@ -257,88 +396,77 @@ def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False
     cache_sec = 'cache' + osx
     ext = LY.load_extents(cfg, cache_sec, os.path.join(raw_dir, 'extents.txt'))
 
+    C = Ctx(cfg, shapes, R, src, layout, layers)
+    names = {L['idx']: f"{L['idx']}. {L['name']}" for L in layers}
     # ---- pass 1: every layer's extent, exporting only what is needed
+    tasks = []
     for L in layers:
-        tag = f"{L['idx']}. {L['name']}"
         sel = L['idx'] in selected
+        jobs = []
         for role in cfg.render_roles(L['idx'], cs_idx):
             if role == 'bgg' and not sel and L['idx'] not in recomp:
-                done += 1
                 continue
             key = f"{L['idx']}|{role}"
             raw = os.path.join(raw_dir, f"{role}_{L['idx']}.png")
-            must = sel or key not in ext or (L['idx'] in recomp and not os.path.exists(raw))
-            pct = 8 + M.round_ahk(done / total * 55)
-            if must:
-                what = {'bg': 'background', 'bgg': 'background without glass', 'cs': 'cheat-sheet foreground'}.get(role, 'foreground')
-                ui.say(f'({done + 1}/{total})  {tag}\nrendering {what}', pct)
-                if not R.render_bg(L, layout, warn, raw, tag, src, role):
-                    warn.append(f'layer {tag}: the Render shading was left out - its image is not the size '
-                                'the page frame gives at this zoom.')
-                b = IM.alpha_box(IM.load(raw))
-                ext[key] = b
-            else:
-                ui.say(f'({done + 1}/{total})  {tag}\nusing cached extent', pct)
-                b = ext[key]
-            if b:
-                box = LY.union_box(box, b)
-            done += 1
-    LY.save_extents(cfg, cache_sec, ext)
+            if sel or key not in ext or (L['idx'] in recomp and not os.path.exists(raw)):
+                jobs.append((role, raw))
+        if jobs:
+            tasks.append((L['idx'], jobs))
+    W = Workers(workers if len(tasks) > 1 else 1, C, spec, ui)
+    try:
+        def say1(k, n, idx, finished):
+            ui.say(f'({k}/{n})  {names[idx]}' + (' drawn' if finished else '\nrendering'),
+                   8 + M.round_ahk(k / max(1, n) * 55))
+        if tasks:
+            ui.say(f'Drawing {len(tasks)} layer(s)' + (f' with {W.n} workers' if W.pool else ''), 8)
+        for idx, (e, w) in sorted(W.run(1, tasks, say1).items()):
+            ext.update(e)
+            warn.extend(w)
+        for L in layers:
+            for role in cfg.render_roles(L['idx'], cs_idx):
+                b = ext.get(f"{L['idx']}|{role}")
+                if b:
+                    box = LY.union_box(box, b)
+        LY.save_extents(cfg, cache_sec, ext)
 
-    full = len(selected) == len(layers)
-    if split_cs and cs_idx and not full:
-        warn.append('the cheat sheet is being rendered separately from the overlay, which changes the shared '
-                    'box every layer is cropped to. Run once with "All" so the unselected layers are rebuilt '
-                    'against it.')
-    if not full:
-        prev = LY.box_parse(cfg.ini.read(cache_sec, 'box', ''))
-        if prev is None and os.path.exists(os.path.join(raw_dir, 'box.txt')):
-            prev = LY.box_parse(open(os.path.join(raw_dir, 'box.txt'), encoding='utf-8-sig').read())
-        if prev:
-            box = LY.union_box(box, prev)
-    if not box:
-        raise M.Die('Every layer rendered blank. Check that the source groups actually contain artwork.')
-    cfg.ini.write(LY.box_str(box), cache_sec, 'box')
-    cw, ch = box['x2'] - box['x1'] + 1, box['y2'] - box['y1'] + 1
-    ui.say(f'Common content box: {cw} x {ch} px\ncasting shadows', 66)
-    pr, pb = IM.shadow_pad(cfg)
+        full = len(selected) == len(layers)
+        if split_cs and cs_idx and not full:
+            warn.append('the cheat sheet is being rendered separately from the overlay, which changes the shared '
+                        'box every layer is cropped to. Run once with "All" so the unselected layers are rebuilt '
+                        'against it.')
+        if not full:
+            prev = LY.box_parse(cfg.ini.read(cache_sec, 'box', ''))
+            if prev is None and os.path.exists(os.path.join(raw_dir, 'box.txt')):
+                prev = LY.box_parse(open(os.path.join(raw_dir, 'box.txt'), encoding='utf-8-sig').read())
+            if prev:
+                box = LY.union_box(box, prev)
+        if not box:
+            raise M.Die('Every layer rendered blank. Check that the source groups actually contain artwork.')
+        cfg.ini.write(LY.box_str(box), cache_sec, 'box')
+        cw, ch = box['x2'] - box['x1'] + 1, box['y2'] - box['y1'] + 1
+        ui.say(f'Common content box: {cw} x {ch} px\ncasting shadows', 66)
+        pr, pb = IM.shadow_pad(cfg)
 
-    # ---- pass 2: compose the selected layers (all of them after a shadow change)
-    mir_sets, cm_sets = MR.mirror_load(cfg), MR.mirror_combo_load(cfg)
-    todo = [L for L in layers if L['idx'] in selected or L['idx'] in recomp]
+        # ---- pass 2: compose the selected layers (all of them after a shadow change)
+        mir_sets, cm_sets = MR.mirror_load(cfg), MR.mirror_combo_load(cfg)
+        todo = [L['idx'] for L in layers if L['idx'] in selected or L['idx'] in recomp]
+        # the mirrored layers first: they take longest, so the workers finish together
+        todo.sort(key=lambda i: i not in mir_sets)
+        tasks = [(i, box, pr, pb, {'raw_dir': raw_dir, 'ta_dir': ta_dir, 'split_cs': split_cs,
+                                   'in_cs': i in cs_idx, 'in_grid': i in cs_grid,
+                                   'mirror': mir_sets.get(i), 'cm': cm_sets.get(i)}) for i in todo]
+
+        def say2(k, n, idx, finished):
+            ui.say(f'({k}/{n})  {names[idx]}' + (' composed' if finished else '\ncompositing'),
+                   66 + M.round_ahk(k / max(1, n) * 32))
+        res2 = W.run(2, tasks, say2)
+    finally:
+        W.close()
     mir_n = 0
-    for i, L in enumerate(todo, 1):
-        idx, tag = L['idx'], f"{L['idx']}. {L['name']}"
-        ui.say(f'({i}/{len(todo)})  {tag}\ncompositing', 66 + M.round_ahk(i / len(todo) * 32))
-        bg, fg = os.path.join(raw_dir, f'bg_{idx}.png'), os.path.join(raw_dir, f'fg_{idx}.png')
-        bg_out = os.path.join(cfg.out_dir('background'), f'{idx}.png')
-        fg_out = os.path.join(cfg.out_dir('foreground'), f'{idx}.png')
-        sh_k = IM.shadow_keys(cfg, src, L, shapes) if cfg.sh_fullkeys else None
-        rk = SH.render_items(cfg, src, L, 'rings') if cfg.key_style == 'render' else None
-        bgg = os.path.join(raw_dir, f'bgg_{idx}.png')
-        R.compose(bgg if (cfg.glass_bg_split() and os.path.exists(bgg)) else bg, None, bg_out, box, pr, pb,
-                  cfg.sh_on_bg, sh_k)
-        R.compose(bg, fg, fg_out, box, pr, pb, True, sh_k, rk)
-        cs_out = os.path.join(cfg.out_dir('cheatsheet'), f'{idx}.png')
-        if split_cs and idx in cs_idx:
-            cs = os.path.join(raw_dir, f'cs_{idx}.png')
-            if os.path.exists(cs):
-                R.compose(bg, cs, cs_out, box, pr, pb, True,
-                          IM.shadow_keys(cfg, src, L, shapes, True) if idx in cs_grid else sh_k, rk)
-        elif idx in cs_grid:
-            R.compose(bg, fg, cs_out, box, pr, pb, True, IM.shadow_keys(cfg, src, L, shapes, True), rk)
-        if cfg.debug_export:
-            shutil.copyfile(bg_out, os.path.join(ta_dir, f'{idx}b.png'))
-            shutil.copyfile(fg_out, os.path.join(ta_dir, f'{idx}f.png'))
-        if idx in mir_sets:
-            if R.mirror_layer(L, mir_sets[idx], layout, warn, raw_dir, box, pr, pb, tag, cm_sets.get(idx)):
-                mir_n += 1
-        else:
-            for kind in ('background', 'foreground'):
-                try:
-                    os.remove(os.path.join(cfg.out_dir(kind), f'{idx}m.png'))
-                except OSError:
-                    pass
+    for idx in sorted(res2):
+        w, made = res2[idx]
+        warn.extend(w)
+        mir_n += bool(made)
 
     # ---- the legend, the cheat sheet
     ui.say('Rendering legend...', 98)
@@ -447,6 +575,12 @@ def fontcheck(argv):
     return 0
 
 
+def _selftest_pid(_):
+    time.sleep(0.2)
+    _low_priority()
+    return os.getpid()
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] in ('render', 'serve'):          # the draw.io helper on its own
@@ -455,6 +589,14 @@ def main(argv=None):
         return 0
     if argv and argv[0] == 'fontcheck':
         return fontcheck(argv[1:])
+    if argv and argv[0] == 'selftest-workers':          # CI: worker processes start from the exe
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+        n = int(argv[1]) if len(argv) > 1 else 3
+        with ProcessPoolExecutor(n, mp_context=multiprocessing.get_context('spawn')) as ex:
+            pids = set(ex.map(_selftest_pid, range(4 * n)))
+        print(f'{len(pids)} worker process(es) ran: {sorted(pids)}')
+        return 0 if len(pids) >= 1 else 1
     if argv and argv[0] in ('--version', 'version'):
         print(VERSION)
         return 0
@@ -473,6 +615,8 @@ def main(argv=None):
     e.add_argument('--drawio', default=None, help='draw.io folder or app.asar (default: [paths] DrawioExe)')
     e.add_argument('--progress', default=None)
     e.add_argument('--result', default=None)
+    e.add_argument('--workers', type=int, default=None,
+                   help='processes drawing and composing layers at once (default: [export] Workers, else 3)')
     a = ap.parse_args(argv)
 
     res = {'ok': False, 'message': '', 'line': '', 'warnings': [], 'images': 0, 'mirrored': 0}
@@ -489,9 +633,19 @@ def main(argv=None):
         drawio = a.drawio or os.path.dirname(cfg.ini.read('paths', 'DrawioExe', ''))
         exporter = Exporter(cfg, drawio, ui.log)
         sel = {int(t) for t in a.layers.replace(' ', ',').split(',') if t.strip().isdigit()}
+        _low_priority()
+        nw = a.workers
+        if nw is None:
+            v = cfg.ini.read('export', 'Workers', '').strip()
+            nw = int(v) if v.isdigit() else 3
+        nw = max(1, min(nw, os.cpu_count() or 1))
+        import fonts as FN
+        spec = {'ini': os.path.abspath(a.ini), 'base': base, 'ahk': os.path.abspath(a.ahk), 'layout': a.layout,
+                'drawio': drawio, 'test_arial': sorted(FN.NOT_COVERED.get('Helvetica', ()))}
+        ui.log(f'workers: {nw}')
         msg, line, warn, total, mir = export(cfg, shapes, exporter, ui, sel, a.recomp,
                                              a.all_run, a.last or not a.all_run, a.last_bak, a.label,
-                                             (a.result, a.progress))
+                                             (a.result, a.progress), nw, spec)
         res.update(ok=True, message=msg, line=line, warnings=warn, images=total, mirrored=mir)
     except M.Die as d:
         res['message'], code = str(d), 2
@@ -511,4 +665,6 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()          # worker processes of the built exe start here
     sys.exit(main())

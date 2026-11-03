@@ -33,7 +33,7 @@ for Helvetica; both reports are in the run's summary and its `checks` artifact.
 
 ## Layout
 
-- `pyport/`: the engine (`engine.py` is the entry point), one module per area of the AHK script.
+- `pyport/`: the engine (`[export] Workers` in the INI or `--workers`: processes drawing and composing layers at once; default 3, below-normal priority) (`engine.py` is the entry point), one module per area of the AHK script.
 - `tests/`: the checks used during the port. They need the user's own files (source, INI, reference
   images from a Debug run), which are not in this repository; `tests/SETUP_PY.sh` restores them.
 - `ci/`: the Windows checks' test page and scripts.
