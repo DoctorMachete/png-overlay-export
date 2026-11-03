@@ -80,7 +80,11 @@ class Doc:
             self.kids.setdefault(c.get('parent'), []).append(c)
 
     def children(self, cid):
-        """//mxCell[@parent='cid'], in document order."""
+        """//mxCell[@parent='cid'], in document order.  A cell with no id (draw.io puts the id
+        on a UserObject / object wrapper) has no children: MSXML's lookup with "" finds none,
+        while kids[None] would be the page roots (a loop through the whole document)."""
+        if not cid:
+            return []
         return self.kids.get(cid, [])
 
     def xpath(self, xp):
