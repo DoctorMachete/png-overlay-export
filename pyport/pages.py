@@ -507,6 +507,13 @@ def key_text_shift(src, out, gid, up):
             st = M.style_set(st, 'spacingTop', fmt4(style_num(st, 'spacingTop', 0) - up))
             st = M.style_set(st, 'spacingBottom', fmt4(style_num(st, 'spacingBottom', 0) + up))
             c.set('style', st)
+        # .163: the legend's other cells go up with the label (CapLegendExtras)
+        if pid != kid and up != 0:
+            pc = _out_cell(out, pid or '')
+            if pc is not None:
+                import capkeys as CK
+                CK.cap_legend_extras(out, src, key, kid, pid, M.geo(pc), 1, 0, -up,
+                                     M.style_get(pc.get('style') or '', 'rotation', ''))
 
 
 def build_page_doc(cfg, ctx, L, layout, role, warn, src):

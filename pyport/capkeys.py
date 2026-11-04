@@ -581,6 +581,40 @@ def loose_badges(doc, gid, keys):
     return out
 
 
+def cap_legend_extras(out, src, key, kid, pid, pg, tf, fdx, fdy, rot):
+    """CapLegendExtras (.163): a group key's other legend cells (images, text cells; not its
+    label pid, badges or groups) scaled by tf about the label's middle and moved by the face
+    offset, turned by the label's rotation."""
+    from pages import cap_scale_text
+    if abs(tf - 1) <= 0.001 and abs(fdx) < 0.01 and abs(fdy) < 0.01:
+        return
+    skip = {bd.get('id') for bd in key_badges(src, key)}
+    a = to_num(rot) * 0.017453292519943295 if is_number(rot) else 0
+    ox, oy = fdx * math.cos(a) - fdy * math.sin(a), fdx * math.sin(a) + fdy * math.cos(a)
+    pcx = (pg['x'] or 0) + pg['w'] / 2
+    pcy = (pg['y'] or 0) + pg['h'] / 2
+    for sc in src.children(kid):             # the source key's own cells (not the export's -cap)
+        cid = sc.get('id')
+        if cid == pid or cid in skip or re.search(r'(^|;)group(;|$)', sc.get('style') or ''):
+            continue
+        ch = _out_cell(out, cid)
+        if ch is None:
+            continue
+        g = ch.find('mxGeometry')
+        if g is None:
+            continue
+        def num(k):
+            v = g.get(k)
+            return to_num(v) if is_number(v) else 0
+        x, y, w, h = num('x'), num('y'), num('width'), num('height')
+        cx, cy = pcx + (x + w / 2 - pcx) * tf + ox, pcy + (y + h / 2 - pcy) * tf + oy
+        w, h = w * tf, h * tf
+        g.set('x', fmt4(cx - w / 2)); g.set('y', fmt4(cy - h / 2))
+        g.set('width', fmt4(w)); g.set('height', fmt4(h))
+        if abs(tf - 1) > 0.001 and ch.get('value'):
+            cap_scale_text(ch, tf)
+
+
 def cap_text_move(cell, dx, dy):
     from pages import style_num
     st = cell.get('style') or ''
@@ -686,6 +720,8 @@ def cap_keys(cfg, st, src, out, gid, centre_x):
                     cap_text_move(pc, fdx, fdy)
                 if wc is not None and wc.get('value'):
                     cap_text_move(wc, fdx, fdy)
+            if is_child:                         # .163: the legend's other parts with it
+                cap_legend_extras(out, src, key, kid, pid, pg, tf, fdx, fdy, rot)
         grot = to_num(rot) if is_number(rot) else 0
         if not LY.cap_transparent(r):
             cap_insert_before(pc, pid + '-cap', cap_image_style(svg_uri(cap_svg(
