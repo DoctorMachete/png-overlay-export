@@ -27,6 +27,8 @@ def conform_grid(shapes, shape, flip=False):
         txt, turn = (cw.get('real', '') if sk in ('real', 'wide') else ''), 0
     else:
         src = shapes.src(sk); parts = sk.split(':')
+        if src.get('warp'):                  # the model file's own grid wins (ConformGridSrc)
+            return grid(src['warp'], src['turn'], flip)
         mf = RS.capmodel(shapes.capdir, parts[1])
         sec = ''
         if mf:

@@ -120,7 +120,8 @@ class Shapes:
         d = mf['secs'][sn]; fc = d['face']
         if sn != '1u' and turn != 180:
             turn = 0
-        r = dict(map=d['map'], sil=pts(d['sil']), dish=pts(d['dish']), face=fc, turn=turn)
+        r = dict(map=d['map'], sil=pts(d['sil']), dish=pts(d['dish']), face=fc, turn=turn,
+                 sec=sn, warp=d.get('warp', ''))          # the section's own Legend 3D grid (.145)
         if turn:
             r['sil'] = turn_pts(r['sil'], turn); r['dish'] = turn_pts(r['dish'], turn)
             r['face'] = ([25 - fc[2], 25 - fc[3], 25 - fc[0], 25 - fc[1]] if turn == 180 else
