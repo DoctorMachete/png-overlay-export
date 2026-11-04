@@ -516,6 +516,101 @@ def key_text_shift(src, out, gid, up):
                                      M.style_get(pc.get('style') or '', 'rotation', ''))
 
 
+def _js_int(st, k, d):
+    """draw.io's parseInt of a style number (mxText: spacing values are cut to whole units,
+    toward zero); d when the key is absent or not a number."""
+    v = M.style_get(st, k, '')
+    return int(to_num(v)) if is_number(v) else d
+
+
+def _label_shift(st, axis, num):
+    """mxText.getSpacing: how far the label's spacing moves its text along x or y (num = how a
+    value is read: exact, or as draw.io does)."""
+    sp = num(st, 'spacing', 2)
+    if axis == 'x':
+        a = M.style_get(st, 'align', 'center')
+        l, r = num(st, 'spacingLeft', 0), num(st, 'spacingRight', 0)
+        return sp + l if a == 'left' else -(sp + r) if a == 'right' else (l - r) / 2
+    a = M.style_get(st, 'verticalAlign', 'middle')
+    t, b = num(st, 'spacingTop', 0), num(st, 'spacingBottom', 0)
+    return sp + t if a == 'top' else -(sp + b) if a == 'bottom' else (t - b) / 2
+
+
+def _label_place(st, g, ox, oy):
+    """How draw.io 30.0.1 places a centred label (measured): its spacing shift cut to whole units
+    (ix, iy, in the label's own frame), and how far rounding puts the text from where that shift
+    alone would (rx, ry, on the page).  Unturned: the middle is rounded to a whole unit (half
+    up), except across a wrapped label, whose left edge and width are rounded before the shift.
+    Turned: the label box's middle is placed on the page (the cell's centre plus the turned
+    shift), rounded the same way (a wrapped one by its box's left edge), the text laid out there
+    and then turned about the unrounded middle."""
+    wrap = M.style_get(st, 'whiteSpace', '') == 'wrap'
+    ix, iy = _label_shift(st, 'x', _js_int), _label_shift(st, 'y', _js_int)
+    x, w = ox + g['x'], g['w']
+    cx, cy = x + w / 2, oy + g['y'] + g['h'] / 2
+    rot = M.style_get(st, 'rotation', '')
+    t = to_num(rot) * 0.017453292519943295 if is_number(rot) else 0
+    if t == 0:
+        ax, ay = cx + ix, cy + iy
+        rx = math.floor(x + 0.5) + math.floor(w + 0.5) / 2 + ix if wrap else math.floor(ax + 0.5)
+    else:
+        ax, ay = cx + ix * math.cos(t) - iy * math.sin(t), cy + ix * math.sin(t) + iy * math.cos(t)
+        rx = math.floor(ax - w / 2 + 0.5) + math.floor(w + 0.5) / 2 if wrap else math.floor(ax + 0.5)
+    return ix, iy, rx - ax, math.floor(ay + 0.5) - ay
+
+
+def label_fractions(src, out, gid):
+    """LabelFractions (.165): draw.io cuts spacing to whole units and rounds a label's place,
+    so the face offset, the text factor's spacing and Key text up lose their fractions.  Each
+    key's label (and a group key's other text cells) gets the difference between where it
+    should be (where draw.io draws the source label, moved by exactly what the export changed)
+    and where draw.io would draw it, as a CSS translate inside the label (its own frame, so a
+    turned label's too).  Vertical text or not centred: only the spacing's cut part."""
+    import capkeys as CK
+    ids = {c.get('id'): c for c in out.iter('mxCell')}
+    def offset(c):
+        ox = oy = 0.0
+        p = ids.get(c.get('parent'))
+        while p is not None and p.get('id') not in ('0', '1'):
+            g = M.geo(p)
+            if g:
+                ox, oy = ox + g['x'], oy + g['y']
+            p = ids.get(p.get('parent'))
+        return ox, oy
+    exact = lambda st, k, d: style_num(st, k, d)
+    for key in M.index_keys(src, gid):
+        kid = key.get('id')
+        pc = M.key_paint_cell(src, key)
+        cells = [key] if pc is key else [pc, key]
+        if pc is not key:
+            skip = {bd.get('id') for bd in CK.key_badges(src, key)}
+            cells += [sc for sc in src.children(kid) if sc is not pc and sc.get('id') not in skip
+                      and not re.search(r'(^|;)group(;|$)', sc.get('style') or '')]
+        for sc in cells:
+            oc = ids.get(sc.get('id'))
+            if oc is None or (oc.get('value') or '') == '':
+                continue
+            s0, s1 = sc.get('style') or '', oc.get('style') or ''
+            if M.style_get(s1, 'html', '') != '1':
+                continue
+            g0, g1 = M.geo(sc), M.geo(oc)
+            if g0 is None or g1 is None:
+                continue
+            ex = _label_shift(s1, 'x', exact) - _label_shift(s0, 'x', exact)
+            ey = _label_shift(s1, 'y', exact) - _label_shift(s0, 'y', exact)
+            ox, oy = offset(oc)
+            ix0, iy0, rx0, ry0 = _label_place(s0, g0, ox, oy)
+            ix1, iy1, rx1, ry1 = _label_place(s1, g1, ox, oy)
+            if (M.style_get(s1, 'horizontal', '1') == '0' or M.style_get(s1, 'align', 'center') != 'center'
+                    or M.style_get(s1, 'verticalAlign', 'middle') != 'middle'):
+                cx, cy = ex - (ix1 - ix0), ey - (iy1 - iy0)
+            else:
+                cx, cy = ex - (ix1 - ix0) + rx0 - rx1, ey - (iy1 - iy0) + ry0 - ry1
+            if abs(cx) > 0.00999 or abs(cy) > 0.00999:      # (not on a 0.00005 step)
+                oc.set('value', '<div style="transform:translate(' + fmt4(cx) + 'px,' + fmt4(cy)
+                       + 'px)">' + oc.get('value') + '</div>')
+
+
 def build_page_doc(cfg, ctx, L, layout, role, warn, src):
     """BuildPageDoc: the one-page document for layer L (role fg / cs; bg not yet)."""
     out, root = new_page()
@@ -539,6 +634,7 @@ def build_page_doc(cfg, ctx, L, layout, role, warn, src):
             tu = cfg.text_up_val()
             if tu != 0:
                 key_text_shift(src, out, L['id'], tu)
+            label_fractions(src, out, L['id'])       # .165: the fractions draw.io drops
         ctx.fonts.normalise(out, set())
         return out
     grp = make_cell('fg', '1', 'group;fillColor=none;', '', MARGIN, MARGIN, GRP_W, GRP_H)
