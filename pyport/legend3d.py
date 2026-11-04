@@ -82,7 +82,13 @@ def warp_map(w, h, keys, k):
         U = (dx * ca + dy * sa) / hw
         V = (-dx * sa + dy * ca) / hh
         inside = (np.abs(U) <= 1) & (np.abs(V) <= 1)
-        du = uv[None, :] + g[..., 0] * k; dv = uv[:, None] + g[..., 1] * k     # drawn node positions
+        tg = key.get('tgrid')
+        if tg:                     # .162: the tilt at its real amount, the curve scaled by strength
+            tg = np.asarray(tg, dtype=np.float64).reshape(N + 1, N + 1, 2)
+            du = uv[None, :] + tg[..., 0] + (g[..., 0] - tg[..., 0]) * k
+            dv = uv[:, None] + tg[..., 1] + (g[..., 1] - tg[..., 1]) * k
+        else:
+            du = uv[None, :] + g[..., 0] * k; dv = uv[:, None] + g[..., 1] * k     # drawn node positions
         X, Y = du[ti, tj], dv[ti, tj]                                          # n x 3, key units
         # the drawn triangles in this box's pixels (pixel index = coordinate, as U/V above)
         PX = cx + X * hw * ca - Y * hh * sa - x0

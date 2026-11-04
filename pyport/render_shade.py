@@ -34,6 +34,7 @@ class Script:
             self.shapes[key] = dict(map=m, sil=strvar('RENDER_SIL_' + suf), dish=strvar('RENDER_DISH_' + suf),
                                     face=[float(v) for v in face.group(1).split(',')])
         self.cap_warp = dict(re.findall(r'^CAP_WARP\["([^"]+)"\] := "([^"]*)"', s, re.M))
+        self.cap_warpt = dict(re.findall(r'^CAP_WARPT\["([^"]+)"\] := "([^"]*)"', s, re.M))   # .162: tilt-only twins
         pl = s[s.index('POS_LABEL := ['):]
         self.pos_label = re.findall(r'"([LR]H-[^"]+)"', pl[:pl.index(']')])
 
@@ -121,7 +122,7 @@ class Shapes:
         if sn != '1u' and turn != 180:
             turn = 0
         r = dict(map=d['map'], sil=pts(d['sil']), dish=pts(d['dish']), face=fc, turn=turn,
-                 sec=sn, warp=d.get('warp', ''))          # the section's own Legend 3D grid (.145)
+                 sec=sn, warp=d.get('warp', ''), warpt=d.get('warpt', ''))          # the section's own Legend 3D grid (.145)
         if turn:
             r['sil'] = turn_pts(r['sil'], turn); r['dish'] = turn_pts(r['dish'], turn)
             r['face'] = ([25 - fc[2], 25 - fc[3], 25 - fc[0], 25 - fc[1]] if turn == 180 else

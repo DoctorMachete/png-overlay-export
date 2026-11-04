@@ -261,7 +261,13 @@ class ShapeText:
         if is_number(v):
             return max(0.2, min(1.5, to_num(v) / 100))
         f = self.face(shape)
-        return round_ahk(min((f[2] - f[0]) / (CAP_FACE[2] - CAP_FACE[0]), (f[3] - f[1]) / (CAP_FACE[3] - CAP_FACE[1])), 2)
+        ts = (1, 1)
+        if is_number(self.cfg.cap_text_warp) and to_num(self.cfg.cap_text_warp) > 0:      # .162
+            import keys as K, render_shade as RS
+            if getattr(self, '_shapes', None) is None:
+                self._shapes = RS.Shapes(self.sc, self.cfg.capmodel_dir, self.cfg.render_shape)
+            ts = K.tilt_scale(self._shapes, shape)
+        return round_ahk(min((f[2] - f[0]) / ts[0] / (CAP_FACE[2] - CAP_FACE[0]), (f[3] - f[1]) / ts[1] / (CAP_FACE[3] - CAP_FACE[1])), 2)
 
 
 def render_svg(cfg, st, r, w, h, ring, shape='', mirrored=False):
