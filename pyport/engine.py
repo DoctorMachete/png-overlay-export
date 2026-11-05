@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.8 (2025-07-30.148)'
+VERSION = 'py-0.2.9 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -297,7 +297,7 @@ def _w_init(spec):
     exporter = Exporter(cfg, spec['drawio'], lambda t: logs.append(t))
     atexit.register(exporter.close)
     src = M.Doc(M.load_xml(cfg.src_drawio))
-    layout = CB.load_combo_data(cfg.combo_cache) if os.path.exists(cfg.combo_cache) else {'combos': []}
+    layout = CB.combos_switch(cfg, CB.load_combo_data(cfg.combo_cache) if os.path.exists(cfg.combo_cache) else {'combos': []})
     R = Run(cfg, shapes, exporter, Progress())
     _W = (Ctx(cfg, shapes, R, src, layout, M.discover(src, [], {})), logs)
 
@@ -354,7 +354,7 @@ def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False
     osx = cfg.out_sfx()
     warn = []
     ui.say('Reading combos', 2)
-    layout = CB.read_layout(cfg, ignore)
+    layout = CB.combos_switch(cfg, CB.read_layout(cfg, ignore))
     ui.say('Loading source diagram\n' + os.path.basename(cfg.src_drawio), 5)
     src = M.Doc(M.load_xml(cfg.src_drawio))
 

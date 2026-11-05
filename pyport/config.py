@@ -101,6 +101,8 @@ class Cfg:
         self.combo_quiettrans = first_num(r("combos", "ListQuietTrans", "0"), 0)
         self.combo_listpad = first_num(r("combos", "ListTextPad", "4"), 4)
         self.combo_cache = os.path.join(self.base_dir, "combo_data.txt")
+        # .169: the settings window's "Process combos" ([combos] Process): off = no combos anywhere
+        self.combos_on = r("combos", "Process", "1").strip() != "0"
         self.cs_grid = r("cheatsheet", "Grid", "")
         self.cs_zoom = to_num(r("cheatsheet", "Zoom", 2.5))
         self.cs_padh = to_num(r("cheatsheet", "PadH", 2))

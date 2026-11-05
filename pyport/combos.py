@@ -122,6 +122,15 @@ def find_layout_json(d, ignore=()):
     return found[0]
 
 
+def combos_switch(cfg, layout):
+    """.169 (script ComboSwitch): with "Process combos" off the run sees no combos at all - no
+    bubbles, no combo lists, nothing on the cheat sheet - while the cache is still read and
+    refreshed as usual."""
+    if not getattr(cfg, 'combos_on', True):
+        layout['combos'] = []
+    return layout
+
+
 def read_layout(cfg, ignore=()):
     """Main's start: a fresh ZMK export wins (parsed, cached, then deleted), else the cache."""
     import model as M
