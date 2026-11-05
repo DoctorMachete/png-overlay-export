@@ -335,8 +335,9 @@ def render_custom(r):
     return any(cap_prop(r, k) != "" for k in RND_KEYS)
 
 
-# .110 / .172: Shape entries that are model files (RENDER_SHAPE_FILES)
-RENDER_SHAPE_FILES = {"chicago": "chicago_convex", "lameflat": "lame_flat", "lamewflat": "lame_wflat"}
+# .110 / .172 / .173: Shape entries that are model files (RENDER_SHAPE_FILES)
+RENDER_SHAPE_FILES = {"chicago": "chicago_convex", "lameflat": "lame_flat", "lamewflat": "lame_wflat",
+                      "xwflat": "ldsa_xwflat", "lamexwflat": "lame_xwflat"}       # .173: extra-wide
 
 
 def render_shape_of(cfg, r, default=""):
