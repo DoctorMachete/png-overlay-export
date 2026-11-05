@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.10 (2025-07-30.148)'
+VERSION = 'py-0.2.11 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -134,9 +134,12 @@ class Run:
         self.cfg, self.shapes, self.export, self.ui = cfg, shapes, export, progress
         self.ctx = P.Ctx(cfg, shapes)
 
-    def page(self, L, layout, role, warn, src):
-        """BuildPage's document (Render: the fg rings left out; Compose draws them)."""
+    def page(self, L, layout, role, warn, src, raw=None):
+        """BuildPage's document (Render: the fg rings left out; Compose draws them).  A Render
+        background (raw given) gets LegendFit, its probe page drawn as <raw>_fit.png (.171)."""
         out = P.build_page_doc(self.cfg, self.ctx, L, layout, role, warn, src)
+        if raw and role == 'bg':
+            self.legend_fit(out, L, src, raw)
         if self.cfg.key_style == 'render' and role != 'bg':
             for c in out.xpath("//mxCell[starts-with(@id,'fg-r')]"):
                 c.getparent().remove(c)
@@ -144,7 +147,7 @@ class Run:
 
     def cap_warp_bg(self, L, layout, warn, raw, tag, src):
         """CapWarpBg: the background in three pages (caps, text, rims), the text bent."""
-        doc = P.build_page_doc(self.cfg, self.ctx, L, layout, 'bg', warn, src)
+        doc = self.page(L, layout, 'bg', warn, src, raw)
         parts = {}
         for part, what in (('c', 'caps'), ('t', 'text'), ('r', 'rims')):
             d = _copy_doc(doc)
@@ -155,6 +158,16 @@ class Run:
         bent, _ = L3.compose_warp(*(IM.load(parts[p]) for p in 'ctr'), keys, to_num(self.cfg.cap_text_warp) / 3)
         IM.save(bent, raw)
 
+    def legend_fit(self, out, L, src, raw):
+        """LegendFit (.171) on a Render background page."""
+        if self.cfg.key_style != 'render' or not isinstance(L['idx'], int):
+            return
+        fit = raw[:-4] + '_fit.png'
+        def probe(doc):
+            self.export(doc, fit, f"{L['idx']}. {L['name']} (legend probe)")
+            return IM.load(fit)
+        P.legend_fit(self.cfg, self.ctx, src, out, L['id'], probe)
+
     def render_bg(self, L, layout, warn, raw, tag, src, role):
         """One raw page: bg (split when Legend 3D is on), bgg, fg or cs; the Render shading on bg."""
         cfg = self.cfg
@@ -164,7 +177,7 @@ class Run:
             if brole == 'bg' and cfg.caps_like() and to_num(cfg.cap_text_warp) > 0:
                 self.cap_warp_bg(L, layout, warn, raw, tag, src)
             else:
-                self.export(self.page(L, layout, brole, warn, src), raw, tag)
+                self.export(self.page(L, layout, brole, warn, src, raw), raw, tag)
         finally:
             cfg.cap_glass_nobg = False
         if role == 'bg' and cfg.key_style == 'render':

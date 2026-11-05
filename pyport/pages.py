@@ -8,6 +8,7 @@ transparent roles in the SVG-caps style, mirrored layers, the legend.
 Numbers: AHK passes floats to MSXML's setAttribute, which converts them as COM
 does (15 significant digits, no trailing '.0'): vstr()."""
 import copy, math, re
+import numpy as np
 from lxml import etree
 import model as M
 import layout as LY
@@ -609,6 +610,132 @@ def label_fractions(src, out, gid):
             if abs(cx) > 0.00999 or abs(cy) > 0.00999:      # (not on a 0.00005 step)
                 oc.set('value', '<div style="transform:translate(' + fmt4(cx) + 'px,' + fmt4(cy)
                        + 'px)">' + oc.get('value') + '</div>')
+
+
+FIT_COLS, FIT_PX, FIT_PY, FIT_PAD = 24, 42, 54, 8      # LegendFit's probe page: 42 x 54 slots, 8-unit margin
+
+
+def _fit_anchor(st, g, ox, oy):
+    """A label's unrounded middle on the page: the cell's centre plus its exact spacing shift,
+    turned with the cell.  [x, y, angle in radians]"""
+    sx, sy = _label_shift(st, 'x', style_num), _label_shift(st, 'y', style_num)
+    rot = M.style_get(st, 'rotation', '')
+    t = to_num(rot) * 0.017453292519943295 if is_number(rot) else 0
+    cx, cy = ox + g['x'] + g['w'] / 2, oy + g['y'] + g['h'] / 2
+    return cx + sx * math.cos(t) - sy * math.sin(t), cy + sx * math.sin(t) + sy * math.cos(t), t
+
+
+def _fit_plain(st):
+    for k, v in (('fillColor', 'none'), ('strokeColor', 'none'), ('gradientColor', 'none'),
+                 ('shadow', '0'), ('glass', '0')):
+        st = M.style_set(st, k, v)
+    return st
+
+
+def _fit_centroid(a, scale, tx, ty, g):
+    """The ink's centroid (alpha-weighted, page units) around the probe cell at about (tx, ty)
+    of geometry g: its box and FIT_PAD units round it, kept inside its slot; or None."""
+    h, w = a.shape[:2]
+    x0, y0 = max(0, math.floor((tx - FIT_PAD) * scale)), max(0, math.floor((ty - FIT_PAD) * scale))
+    x1 = min(w, math.floor((tx + min(g['w'] + FIT_PAD, FIT_PX - FIT_PAD)) * scale))
+    y1 = min(h, math.floor((ty + min(g['h'] + FIT_PAD, FIT_PY - FIT_PAD)) * scale))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    al = a[y0:y1, x0:x1, 3].astype(np.int64)
+    s = int(al.sum())
+    if s < 3 * 255:
+        return None
+    sx = int((al.sum(0) * np.arange(x0, x1)).sum()) + s * 0.5
+    sy = int((al.sum(1) * np.arange(y0, y1)).sum()) + s * 0.5
+    return sx / s / scale, sy / s / scale
+
+
+def legend_fit(cfg, ctx, src, out, gid, probe):
+    """LegendFit (.171): draw.io (Chromium) puts a label's text baseline on a whole unit, so a
+    legend whose font the export scales does not scale about its middle: it keeps its line or
+    jumps a whole unit (4 % of a key; LDSA's 0.74 put 9 px labels ~0.9 low).  Every legend text
+    cell the export changed (as LabelFractions: label, wrapper, a group key's other text cells;
+    not badges, pictures or vertical text) goes twice onto one probe page - the source's cell and
+    the export's - each in its own slot, moved by whole units only (the snapping stays the same).
+    probe(doc) renders it (RGBA array).  Each cell's ink centroid gives where draw.io really puts
+    it; the export's label is moved (its .165 translate, own frame) to the source's centroid
+    scaled about the label's anchor: A1 + tf (D - A0), tf = the font size ratio."""
+    import capkeys as CK
+    ids = {c.get('id'): c for c in out.iter('mxCell')}
+    def offset(c):
+        ox = oy = 0.0
+        p = ids.get(c.get('parent'))
+        while p is not None and p.get('id') not in ('0', '1'):
+            g = M.geo(p)
+            if g:
+                ox, oy = ox + g['x'], oy + g['y']
+            p = ids.get(p.get('parent'))
+        return ox, oy
+    pairs = []
+    for key in M.index_keys(src, gid):
+        kid = key.get('id')
+        pc = M.key_paint_cell(src, key)
+        cells = [key] if pc is key else [pc, key]
+        if pc is not key:
+            skip = {bd.get('id') for bd in CK.key_badges(src, key)}
+            cells += [sc for sc in src.children(kid) if sc is not pc and sc.get('id') not in skip
+                      and not re.search(r'(^|;)group(;|$)', sc.get('style') or '')]
+        for sc in cells:
+            oc = ids.get(sc.get('id'))
+            if oc is None or (oc.get('value') or '') == '':
+                continue
+            s0, s1 = sc.get('style') or '', oc.get('style') or ''
+            if (M.style_get(s1, 'html', '') != '1' or M.style_get(s1, 'horizontal', '1') == '0'
+                    or M.style_get(s1, 'shape', '') == 'image' or re.search(r'(?i)(^|;)image=', s1)):
+                continue
+            g0, g1 = M.geo(sc), M.geo(oc)
+            if g0 is None or g1 is None:
+                continue
+            if s0 == s1 and (sc.get('value') or '') == oc.get('value') and g0 == g1:
+                continue
+            pairs.append((sc, oc, g0, g1, offset(oc)))
+    if not pairs:
+        return 0
+    pd, root = new_page()
+    rows = (len(pairs) - 1) // FIT_COLS + 1
+    root.append(make_cell('fitframe', '1', 'fillColor=none;strokeColor=none;', '', 0, 0,
+                          FIT_PX * FIT_COLS + FIT_PAD, FIT_PY * 2 * rows + FIT_PAD))
+    slots = []
+    for i, (sc, oc, g0, g1, (ox, oy)) in enumerate(pairs):
+        tx, ty = FIT_PAD + 2 + FIT_PX * (i % FIT_COLS), FIT_PAD + 2 + FIT_PY * 2 * (i // FIT_COLS)
+        s0 = (math.floor(tx - (ox + g0['x']) + 0.5), math.floor(ty - (oy + g0['y']) + 0.5))
+        s1 = (math.floor(tx - (ox + g1['x']) + 0.5), math.floor(ty + FIT_PY - (oy + g1['y']) + 0.5))
+        root.append(make_cell(f'fit{i}s', '1', _fit_plain(sc.get('style') or ''), sc.get('value') or '',
+                              fmt4(ox + g0['x'] + s0[0]), fmt4(oy + g0['y'] + s0[1]), fmt4(g0['w']), fmt4(g0['h'])))
+        slots.append((tx, ty, s0, s1))
+    ctx.fonts.normalise(pd, set())            # the source's cells as any page has them
+    for i, (sc, oc, g0, g1, (ox, oy)) in enumerate(pairs):
+        s1 = slots[i][3]
+        root.append(make_cell(f'fit{i}e', '1', _fit_plain(oc.get('style') or ''), oc.get('value') or '',
+                              fmt4(ox + g1['x'] + s1[0]), fmt4(oy + g1['y'] + s1[1]), fmt4(g1['w']), fmt4(g1['h'])))
+    scale = cfg.scale
+    a = probe(pd)
+    n = 0
+    for i, (sc, oc, g0, g1, (ox, oy)) in enumerate(pairs):
+        tx, ty, s0, s1 = slots[i]
+        d, e = _fit_centroid(a, scale, tx, ty, g0), _fit_centroid(a, scale, tx, ty + FIT_PY, g1)
+        if d is None or e is None:
+            continue
+        a0x, a0y, _ = _fit_anchor(sc.get('style') or '', g0, ox, oy)
+        a1x, a1y, t = _fit_anchor(oc.get('style') or '', g1, ox, oy)
+        tf = style_num(oc.get('style'), 'fontSize', 11) / style_num(sc.get('style'), 'fontSize', 11)
+        dx = a1x + tf * (d[0] - s0[0] - a0x) - (e[0] - s1[0])
+        dy = a1y + tf * (d[1] - s0[1] - a0y) - (e[1] - s1[1])
+        lx, ly = dx * math.cos(t) + dy * math.sin(t), -dx * math.sin(t) + dy * math.cos(t)
+        if abs(lx) <= 0.00999 and abs(ly) <= 0.00999:
+            continue
+        v = oc.get('value')
+        m = re.fullmatch(r'<div style="transform:translate\((-?[0-9.]+)px,(-?[0-9.]+)px\)">(.*)</div>', v, re.S)
+        if m:
+            lx, ly, v = float(m.group(1)) + lx, float(m.group(2)) + ly, m.group(3)
+        oc.set('value', '<div style="transform:translate(' + fmt4(lx) + 'px,' + fmt4(ly) + 'px)">' + v + '</div>')
+        n += 1
+    return n
 
 
 def build_page_doc(cfg, ctx, L, layout, role, warn, src):
