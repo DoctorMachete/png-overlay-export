@@ -335,12 +335,16 @@ def render_custom(r):
     return any(cap_prop(r, k) != "" for k in RND_KEYS)
 
 
+# .110 / .172: Shape entries that are model files (RENDER_SHAPE_FILES)
+RENDER_SHAPE_FILES = {"chicago": "chicago_convex", "lameflat": "lame_flat", "lamewflat": "lame_wflat"}
+
+
 def render_shape_of(cfg, r, default=""):
     rs = cap_prop(r, "rndShape").lower()
-    if rs == "chicago":
-        mf = cap_model_file(cfg, "chicago_convex")
+    if rs in RENDER_SHAPE_FILES:
+        mf = cap_model_file(cfg, RENDER_SHAPE_FILES[rs])
         if mf and "1u" in mf["secs"]:
-            return "m:chicago_convex"
+            return "m:" + RENDER_SHAPE_FILES[rs]
         rs = ""
     return rs if rs in ("flat", "wflat", "cover", "bezel") else (default or cfg.render_shape)
 
