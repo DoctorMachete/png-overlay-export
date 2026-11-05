@@ -267,7 +267,8 @@ class ShapeText:
             if getattr(self, '_shapes', None) is None:
                 self._shapes = RS.Shapes(self.sc, self.cfg.capmodel_dir, self.cfg.render_shape)
             ts = K.tilt_scale(self._shapes, shape)
-        return round_ahk(min((f[2] - f[0]) / ts[0] / (CAP_FACE[2] - CAP_FACE[0]), (f[3] - f[1]) / ts[1] / (CAP_FACE[3] - CAP_FACE[1])), 2)
+        # .170: against the draw.io key (25 x 25), not the SVG caps' face: a legend keeps its share of the face
+        return round_ahk(min((f[2] - f[0]) / ts[0] / 25, (f[3] - f[1]) / ts[1] / 25), 2)
 
 
 def render_svg(cfg, st, r, w, h, ring, shape='', mirrored=False):

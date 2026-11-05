@@ -435,7 +435,7 @@ def render_text_factor(cfg, shapes, shape="", pct=""):
     if is_number(cfg.cap_text_warp) and to_num(cfg.cap_text_warp) > 0:      # .162: as RenderTextFactor
         import keys as K
         ts = K.tilt_scale(shapes, shape)
-    return round_ahk(min((f[2] - f[0]) / ts[0] / (CAP_FACE[2] - CAP_FACE[0]), (f[3] - f[1]) / ts[1] / (CAP_FACE[3] - CAP_FACE[1])), 2)
+    return round_ahk(min((f[2] - f[0]) / ts[0] / 25, (f[3] - f[1]) / ts[1] / 25), 2)        # .170: against the key
 
 
 def _s(v):
