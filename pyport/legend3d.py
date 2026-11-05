@@ -47,6 +47,25 @@ def _exact(fix, U, V, X, Y, det, valid, lab, SU, SV, SU_T, SV_T):
     SV.flat[fix[got]] = b0 * SV_T[t, 0] + b1 * SV_T[t, 1] + b2 * SV_T[t, 2]
 
 
+def no_stretch(du, dv):
+    """CapNoStretch (.167): a surface seen from above only ever shrinks a legend, but the grids
+    let the bend fade out just past the face and pin the key's edge, which stretched whatever
+    reached there back out (up to 1.7x on lame_stilt_t15).  Going out from the middle node, no
+    step between two nodes is drawn longer than it is flat (2 / N): past the face the legend
+    moves with the face's edge, and the strip it leaves at the key's border is cleared."""
+    st, c = 2.0 / N, N // 2
+    du, dv = du.copy(), dv.copy()
+    for i in range(c + 1, N + 1):
+        dv[i] = np.minimum(dv[i], dv[i - 1] + st)
+    for i in range(c - 1, -1, -1):
+        dv[i] = np.maximum(dv[i], dv[i + 1] - st)
+    for j in range(c + 1, N + 1):
+        du[:, j] = np.minimum(du[:, j], du[:, j - 1] + st)
+    for j in range(c - 1, -1, -1):
+        du[:, j] = np.maximum(du[:, j], du[:, j + 1] - st)
+    return du, dv
+
+
 def warp_map(w, h, keys, k):
     """The remap of the whole page: for every pixel of every key, its source point.  Each key's 288
     bent triangles are painted into a label image (cv2.fillConvexPoly, later triangles over
@@ -89,6 +108,7 @@ def warp_map(w, h, keys, k):
             dv = uv[:, None] + tg[..., 1] + (g[..., 1] - tg[..., 1]) * k
         else:
             du = uv[None, :] + g[..., 0] * k; dv = uv[:, None] + g[..., 1] * k     # drawn node positions
+        du, dv = no_stretch(du, dv)
         X, Y = du[ti, tj], dv[ti, tj]                                          # n x 3, key units
         # the drawn triangles in this box's pixels (pixel index = coordinate, as U/V above)
         PX = cx + X * hw * ca - Y * hh * sa - x0
