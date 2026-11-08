@@ -46,6 +46,17 @@ jobs:
           dist\png-overlay-export\png-overlay-export.exe export --help
           dist\png-overlay-export\png-overlay-export.exe selftest-workers 3
 
+      - name: Keycap models from an STL (capmodel, .178)
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out\capmodels | Out-Null
+          dist\png-overlay-export\png-overlay-export.exe capmodel --stl ci\test_cap.stl --out out\capmodels --key citest --name "CI test" --tilts 0,7 --tops dish,flat --result out\capmodel.json
+          if ($LASTEXITCODE -ne 0) { throw "capmodel failed" }
+          $n = (Get-ChildItem out\capmodels -Filter *.capmodel).Count
+          Write-Host "$n model file(s)"
+          if ($n -ne 3) { throw "expected 3 model files, got $n" }
+
       - name: Progress file under AHK's polling
         run: python ci\progress_lock.py
 

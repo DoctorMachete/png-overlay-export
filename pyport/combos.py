@@ -2,7 +2,7 @@
 zmk_combo_cache v1-v3), CacheUnesc, SplitNums, LoadComboMap (combo_map.ini),
 HaveKeyData, KeyBehaviour; the ZMK layout export: FindLayoutJson, ParseKeyData (ReadComboKeys,
 KpText), CacheEsc, JoinNums, SaveComboData, and read_layout (Main's choice between them)."""
-import glob, json, os
+import glob, json, os, re
 from util import ahk_sorted
 
 CACHE_HEADER = 'zmk_combo_cache\tv3'
@@ -140,6 +140,7 @@ def read_layout(cfg, ignore=()):
             layout = json.load(f)
         parse_key_data(layout)
         save_combo_data(cfg.combo_cache, layout)
+        save_mirror_data(os.path.join(os.path.dirname(cfg.combo_cache), 'mirror_data.txt'), layout)   # .178
         try:
             os.remove(jp)
         except OSError:
@@ -228,3 +229,91 @@ def have_key_data(layout):
 
 def key_behaviour(layout, idx, p):
     return layout.get('keyBeh', {}).get(f'{idx}|{p}', '')
+
+
+# ------------------------------------------------------------- mirror data (.178)
+def _dt_block(t, i):
+    """The text between the brace at t[i] and its match (exclusive), or None."""
+    depth = 0
+    for j in range(i, len(t)):
+        if t[j] == '{':
+            depth += 1
+        elif t[j] == '}':
+            depth -= 1
+            if depth == 0:
+                return t[i + 1:j]
+    return None
+
+
+def _dt_nums(t, prop):
+    m = re.search(r'(?<![\w-])' + re.escape(prop) + r'\s*=\s*<([^>]*)>', t)
+    if not m:
+        return None
+    tk = m.group(1).split()
+    return [int(x) for x in tk] if tk and all(re.fullmatch(r'\d+', x) for x in tk) else None
+
+
+def mirror_data(layout):
+    """SaveMirrorData's lines (.178): the keymap's mirror_full behavior (its devicetree in
+    custom_defined_behaviors / custom_devicetree, comments dropped; the first definition,
+    whatever #ifdef it sits in): mirror-positions and combo-positions (60 numbers each), and
+    each child node's layers (LAYER_<name> as the keymap editor names them, or a number), a
+    child's own positions overriding.  [(layer, keys, combos or None)]."""
+    t = (layout.get('custom_defined_behaviors') or '') + '\n' + (layout.get('custom_devicetree') or '')
+    t = re.sub(r'/\*.*?\*/', ' ', t, flags=re.S)
+    t = re.sub(r'//[^\r\n]*', '', t)
+    m = re.search(r'\bmirror_full\s*:\s*mirror_full\s*\{', t)
+    if not m:
+        return []
+    body = _dt_block(t, m.end() - 1)
+    if body is None:
+        return []
+    names = {}
+    for i, n in enumerate(layout.get('layer_names') or []):
+        names['LAYER_' + re.sub(r'[^A-Za-z0-9_]', '_', str(n))] = i
+    kids, top, pos = [], '', 0
+    for cm in re.finditer(r'([A-Za-z_][\w-]*)\s*\{', body):
+        if cm.start() < pos:
+            continue
+        blk = _dt_block(body, cm.end() - 1)
+        if blk is None:
+            break
+        top += body[pos:cm.start()]
+        kids.append(blk)
+        pos = cm.end() + len(blk) + 1
+    top += body[pos:]
+    keys0, combos0 = _dt_nums(top, 'mirror-positions'), _dt_nums(top, 'combo-positions')
+    out, seen = [], set()
+    for blk in kids:
+        lm = re.search(r'(?<![\w-])layers\s*=\s*<([^>]*)>', blk)
+        if not lm:
+            continue
+        keys = _dt_nums(blk, 'mirror-positions') or keys0
+        combos = _dt_nums(blk, 'combo-positions') or combos0
+        if not keys or len(keys) != 60:
+            continue
+        for tok in lm.group(1).split():
+            li = int(tok) if tok.isdigit() else names.get(tok)
+            if li is None or li in seen:
+                continue
+            seen.add(li)
+            out.append((li, keys, combos if combos and len(combos) == 60 else None))
+    return sorted(out)
+
+
+def save_mirror_data(path, layout):
+    """SaveMirrorData (.178): mirror_data.txt beside combo_data.txt, for Mirror keys' Import;
+    removed when the keymap has no mirror_full.  UTF-8 without BOM, LF."""
+    rows = mirror_data(layout)
+    if not rows:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    text = ("; mirror_data.txt (v1): Mirror keys from the keymap's mirror_full, written with combo_data.txt.\n"
+            "; M<tab>layer<tab>keys (60)<tab>combos (60; empty: as the keys)\n")
+    for li, k, c in rows:
+        text += 'M\t' + str(li) + '\t' + ','.join(map(str, k)) + '\t' + (','.join(map(str, c)) if c else '') + '\n'
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)

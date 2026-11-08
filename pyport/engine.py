@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.14 (2025-07-30.148)'
+VERSION = 'py-0.2.15 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -606,6 +606,9 @@ def main(argv=None):
         return 0
     if argv and argv[0] == 'fontcheck':
         return fontcheck(argv[1:])
+    if argv and argv[0] == 'capmodel':                  # .178: keycap models from an STL (capgen)
+        import capgen
+        return capgen.main(argv[1:])
     if argv and argv[0] == 'selftest-workers':          # CI: worker processes start from the exe
         import multiprocessing
         from concurrent.futures import ProcessPoolExecutor

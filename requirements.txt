@@ -3,3 +3,4 @@ opencv-python-headless>=4.10
 Pillow>=11.0
 lxml>=5.0
 fonttools>=4.50
+scipy>=1.13
