@@ -498,7 +498,10 @@ def strip_key_strokes(src, out, gid):
 
 
 def key_text_shift(src, out, gid, up):
-    for key in M.index_keys(src, gid):
+    import capkeys as CK
+    keys = M.index_keys(src, gid)
+    lpics = CK.loose_pictures(src, gid, keys) if up != 0 else {}      # .176
+    for key in keys:
         kid, pid = key.get('id'), M.key_paint_cell(src, key).get('id')
         for cid in ([kid] if pid == kid else [pid, kid]):
             c = _out_cell(out, cid or '')
@@ -515,6 +518,12 @@ def key_text_shift(src, out, gid, up):
                 import capkeys as CK
                 CK.cap_legend_extras(out, src, key, kid, pid, M.geo(pc), 1, 0, -up,
                                      M.style_get(pc.get('style') or '', 'rotation', ''))
+        # .176: pictures loose on the key go up with it too
+        if lpics.get(kid):
+            pc = _out_cell(out, pid or '')
+            if pc is not None:
+                CK.cap_loose_extras(out, lpics[kid], M.geo(key), M.geo(pc), pid != kid, 1, 0, -up,
+                                    M.style_get(pc.get('style') or '', 'rotation', ''))
 
 
 def _js_int(st, k, d):

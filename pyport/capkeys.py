@@ -582,23 +582,45 @@ def loose_badges(doc, gid, keys):
     return out
 
 
-def cap_legend_extras(out, src, key, kid, pid, pg, tf, fdx, fdy, rot):
-    """CapLegendExtras (.163): a group key's other legend cells (images, text cells; not its
-    label pid, badges or groups) scaled by tf about the label's middle and moved by the face
-    offset, turned by the label's rotation."""
+def _is_picture(st):
+    return M.style_get(st, 'shape', '') == 'image' or re.search(r'(?i)(^|;)image=', st) is not None
+
+
+def loose_pictures(doc, gid, keys):
+    """LoosePictures (.176): pictures (image= or shape=image) that sit loose in layer group gid
+    on a key, by the key under each one's centre (as LooseBadges): key id -> [cells].  Never a
+    key, a group or larger than the key."""
+    out = {}
+    kids = {k.get('id') for k in keys}
+    for ch in doc.children(gid):
+        st = ch.get('style') or ''
+        if ch.get('id') in kids or re.search(r'(^|;)group(;|$)', st) or not _is_picture(st):
+            continue
+        g = M.geo(ch)
+        if g is None:
+            continue
+        cx, cy = g['x'] + g['w'] / 2, g['y'] + g['h'] / 2
+        for key in keys:
+            kg = M.geo(key)
+            if kg is None:
+                continue
+            if kg['x'] <= cx <= kg['x'] + kg['w'] and kg['y'] <= cy <= kg['y'] + kg['h']:
+                if g['w'] <= kg['w'] + 0.01 and g['h'] <= kg['h'] + 0.01:
+                    out.setdefault(key.get('id'), []).append(ch)
+                break
+    return out
+
+
+def cap_extras_move(out, cells, pcx, pcy, tf, fdx, fdy, rot):
+    """The legend's other cells (source cells; the export's copies are changed) scaled by tf
+    about (pcx, pcy) and moved by the face offset fdx, fdy in the label's own frame (turned by
+    rot): their geometry, their text (cap_scale_text) and (.176) a picture's own drawn size
+    (imageWidth / imageHeight, which draw.io keeps whatever the cell's size)."""
     from pages import cap_scale_text
-    if abs(tf - 1) <= 0.001 and abs(fdx) < 0.01 and abs(fdy) < 0.01:
-        return
-    skip = {bd.get('id') for bd in key_badges(src, key)}
     a = to_num(rot) * 0.017453292519943295 if is_number(rot) else 0
     ox, oy = fdx * math.cos(a) - fdy * math.sin(a), fdx * math.sin(a) + fdy * math.cos(a)
-    pcx = (pg['x'] or 0) + pg['w'] / 2
-    pcy = (pg['y'] or 0) + pg['h'] / 2
-    for sc in src.children(kid):             # the source key's own cells (not the export's -cap)
-        cid = sc.get('id')
-        if cid == pid or cid in skip or re.search(r'(^|;)group(;|$)', sc.get('style') or ''):
-            continue
-        ch = _out_cell(out, cid)
+    for sc in cells:
+        ch = _out_cell(out, sc.get('id'))
         if ch is None:
             continue
         g = ch.find('mxGeometry')
@@ -612,8 +634,40 @@ def cap_legend_extras(out, src, key, kid, pid, pg, tf, fdx, fdy, rot):
         w, h = w * tf, h * tf
         g.set('x', fmt4(cx - w / 2)); g.set('y', fmt4(cy - h / 2))
         g.set('width', fmt4(w)); g.set('height', fmt4(h))
-        if abs(tf - 1) > 0.001 and ch.get('value'):
-            cap_scale_text(ch, tf)
+        if abs(tf - 1) > 0.001:
+            if ch.get('value'):
+                cap_scale_text(ch, tf)
+            cst = ch.get('style') or ''
+            for k in ('imageWidth', 'imageHeight'):
+                iv = M.style_get(cst, k, '')
+                if is_number(iv):
+                    cst = M.style_set(cst, k, fmt4(to_num(iv) * tf))
+            ch.set('style', cst)
+
+
+def cap_legend_extras(out, src, key, kid, pid, pg, tf, fdx, fdy, rot):
+    """CapLegendExtras (.163): a group key's other legend cells (images, text cells; not its
+    label pid, badges or groups) scaled by tf about the label's middle and moved by the face
+    offset, turned by the label's rotation."""
+    if abs(tf - 1) <= 0.001 and abs(fdx) < 0.01 and abs(fdy) < 0.01:
+        return
+    skip = {bd.get('id') for bd in key_badges(src, key)}
+    pcx = (pg['x'] or 0) + pg['w'] / 2
+    pcy = (pg['y'] or 0) + pg['h'] / 2
+    cells = [sc for sc in src.children(kid)          # the source key's own cells (not the export's -cap)
+             if sc.get('id') != pid and sc.get('id') not in skip
+             and not re.search(r'(^|;)group(;|$)', sc.get('style') or '')]
+    cap_extras_move(out, cells, pcx, pcy, tf, fdx, fdy, rot)
+
+
+def cap_loose_extras(out, cells, kg, pg, is_child, tf, fdx, fdy, rot):
+    """.176: pictures loose on a key (loose_pictures) follow its legend as a group key's own do:
+    scaled and moved about the label's middle, in the layer group's frame."""
+    if not cells or (abs(tf - 1) <= 0.001 and abs(fdx) < 0.01 and abs(fdy) < 0.01):
+        return
+    bx, by = (kg['x'], kg['y']) if is_child else (0, 0)
+    cap_extras_move(out, cells, bx + (pg['x'] or 0) + pg['w'] / 2, by + (pg['y'] or 0) + pg['h'] / 2,
+                    tf, fdx, fdy, rot)
 
 
 def cap_text_move(cell, dx, dy):
@@ -680,6 +734,7 @@ def cap_keys(cfg, st, src, out, gid, centre_x):
     badge = LY.load_badge(src)
     keys = M.index_keys(src, gid)
     loose = loose_badges(src, gid, keys)
+    lpics = loose_pictures(src, gid, keys)      # .176
     rims = []
     render = cfg.key_style == 'render'
     for ki, key in enumerate(keys):
@@ -723,6 +778,7 @@ def cap_keys(cfg, st, src, out, gid, centre_x):
                     cap_text_move(wc, fdx, fdy)
             if is_child:                         # .163: the legend's other parts with it
                 cap_legend_extras(out, src, key, kid, pid, pg, tf, fdx, fdy, rot)
+            cap_loose_extras(out, lpics.get(kid, []), kg, pg, is_child, tf, fdx, fdy, rot)     # .176
         grot = to_num(rot) if is_number(rot) else 0
         if not LY.cap_transparent(r):
             cap_insert_before(pc, pid + '-cap', cap_image_style(svg_uri(cap_svg(
