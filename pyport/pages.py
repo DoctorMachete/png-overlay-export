@@ -103,6 +103,52 @@ def set_html_text(html_val, new_text):
     return esc
 
 
+_L0_TITLES = [None, []]          # .188: [the source document, its layer 0 title cells]
+
+
+def layer0_title_cells(src):
+    """Layer0TitleCells (.188): layer 0's title cells in document order (the dark-red one, then
+    the light-grey highlight drawn above it) - the group on page-grid slot 0, found without
+    reading its keys; [] when none.  Cached per source document."""
+    if _L0_TITLES[0] is src:
+        return _L0_TITLES[1]
+    cells, pg = [], M.page_grid(src)
+    for grp in src.xpath("//diagram[@name='background']//mxCell[contains(@style,'group')]"):
+        g = M.geo(grp)
+        if not M.is_layer_group_geo(g) or M.slot_of_group(g, pg) != 0:
+            continue
+        cx = M.keys_mid_x(src, grp)
+        cells = [k for k in src.children(grp.get('id')) if is_centre_cell(k, cx)]
+        break
+    _L0_TITLES[0], _L0_TITLES[1] = src, cells
+    return cells
+
+
+def title_highlight(src, keep):
+    """TitleHighlight (.188): the light-grey highlight for a layer whose title is one cell
+    (keep): layer 0's top title cell with keep's text in layer 0's html formatting, keep's
+    fontSize and spacingBottom, place and size; None when layer 0 has no second title cell."""
+    l0 = layer0_title_cells(src)
+    if len(l0) < 2:
+        return None
+    c = import_node(l0[-1])
+    c.set('id', 'fg-title-hl')
+    st, ks = c.get('style') or '', keep.get('style') or ''
+    for key in ('fontSize', 'spacingBottom'):
+        v = M.style_get(ks, key, '')
+        if v != '':
+            st = M.style_set(st, key, v)
+    c.set('style', st)
+    c.set('value', set_html_text(c.get('value') or '', M.plain_text(keep).strip()))
+    kg, cg = M.geo(keep), c.find('mxGeometry')
+    if kg is not None and cg is not None:
+        cg.set('x', vstr(kg['x']))
+        cg.set('y', vstr(kg['y']))
+        cg.set('width', vstr(kg['w']))
+        cg.set('height', vstr(kg['h']))
+    return c
+
+
 def align_title_pair(cells, L, warn):
     if len(cells) != 2:
         return
@@ -784,6 +830,13 @@ def build_page_doc(cfg, ctx, L, layout, role, warn, src):
         c.set('parent', 'fg')
         root.append(c)
         title_cells.append(c)
+    # .188: one title cell (layers 1-28 keep only the dark-red one): the highlight from layer 0's
+    if len(title_cells) == 1 and isinstance(L['idx'], int) and L['idx'] != 0:
+        hl = title_highlight(src, title_cells[0])
+        if hl is not None:
+            hl.set('parent', 'fg')
+            root.append(hl)
+            title_cells.append(hl)
     align_title_pair(title_cells, L, warn)
     if L.get('mirror'):
         for c in title_cells:
