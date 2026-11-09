@@ -418,8 +418,8 @@ def add_picture_bubble(cfg, src, root, c, wrap, cx, cy, warn):
     the centre.  Cells with a picture (image=data:…) get the layout's combo font colour (blank:
     as drawn) and the combo text opacity; other cells the bubble look (CapComboStyle), text scaled
     and outlined like a text bubble's."""
-    cell = wrap.find('mxCell')
-    eg = M.geo(cell)
+    cell, wrap_id, wrap_label = CP.bubble_root(src, cfg.combo_tab, wrap)   # .191: its group if grouped
+    eg = M.geo(cell) if cell is not None else None
     if cell is None or eg is None:
         warn.append(f"the element linked to combo {c['name']} on the '{cfg.combo_tab}' tab has no size")
         return
@@ -466,13 +466,13 @@ def add_picture_bubble(cfg, src, root, c, wrap, cx, cy, warn):
     top_id = 'fg-c' + c['name']
     node.set('id', top_id)
     node.set('parent', 'fg')
-    node.set('value', wrap.get('label') or '')
+    node.set('value', wrap_label)
     dress(node, True)
     ng = node.find('mxGeometry')
     ng.set('x', fmt4(cx - eg['w'] * cf / 2))
     ng.set('y', fmt4(cy - eg['h'] * cf / 2))
     root.append(node)
-    copy(wrap.get('id'), top_id, 0)
+    copy(wrap_id, top_id, 0)
 
 
 # ---------------------------------------------------------------- foreground

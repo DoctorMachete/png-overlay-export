@@ -37,6 +37,32 @@ def cell_id(cell):
     return p.get('id') if p is not None and p.tag in _WRAP else ''
 
 
+def _is_group(cell):
+    return cell is not None and 'group' in (cell.get('style') or '').split(';')
+
+
+def bubble_root(src, tab, wrap):
+    """.191: what to copy for a linked element (wrap: the object / UserObject carrying 'combo'):
+    the element itself, or - when it sits inside a group (the property set on the bubble, then
+    grouped with its picture) - the outermost group holding it below the page.
+    Returns (cell, id, label)."""
+    cell, cid, label = wrap.find('mxCell'), wrap.get('id') or '', wrap.get('label') or ''
+    for _ in range(16):
+        pid = cell.get('parent') if cell is not None else None
+        if not pid:
+            break
+        hit = src.xpath('//diagram[@name=' + M.q(tab) + ']//*[@id=' + M.q(pid) + ']')
+        if not hit:
+            break
+        el = hit[0]
+        pcell = el.find('mxCell') if el.tag in _WRAP else el
+        if not _is_group(pcell):
+            break
+        cell, cid = pcell, pid
+        label = (el.get('label') if el.tag in _WRAP else pcell.get('value')) or ''
+    return cell, cid, label
+
+
 def cell_label(cell):
     p = cell.getparent()
     if p is not None and p.tag in _WRAP:
