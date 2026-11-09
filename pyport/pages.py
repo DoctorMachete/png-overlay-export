@@ -13,6 +13,7 @@ from lxml import etree
 import model as M
 import layout as LY
 import combos as CB
+import combo_pics as CP
 from util import fmt4, is_number, to_num, ahk_sorted, first_num
 
 PAGE_W, PAGE_H, MARGIN = 500, 240, 13
@@ -330,10 +331,10 @@ def combo_list_label(cfg, src, spec):
     return t if t else spec
 
 
-def combo_list_line(cfg, src, slots, c, spec, L, layout, have_keys, warn):
+def combo_list_line(cfg, src, slots, c, spec, L, layout, have_keys, warn, raw=False):
     line = ' + '.join(key_label_for(cfg, slots, int(p), c, L, layout, have_keys, warn)
                       for p in sorted(c['keyPositions']))
-    return line + ' ' + COMBO_ARROW + ' ' + combo_list_label(cfg, src, spec)
+    return line + ' ' + COMBO_ARROW + ' ' + (spec if raw else combo_list_label(cfg, src, spec))   # .190: raw
 
 
 def find_combo_list_element(cfg, src):
@@ -410,6 +411,70 @@ def add_combo_lists(cfg, src, root, L, slots, lists, layout, have_keys, warn):
         root.append(node)
 
 
+# ------------------------------------------------------ picture bubbles (.190)
+def add_picture_bubble(cfg, src, root, c, wrap, cx, cy, warn):
+    """PicBubbleAdd: the combos-tab element linked to combo c by its 'combo' property (a group of
+    bubble + picture, or a single cell) copied into 'fg', centred on (cx, cy), Combo scale about
+    the centre.  Cells with a picture (image=data:…) get the layout's combo font colour (blank:
+    as drawn) and the combo text opacity; other cells the bubble look (CapComboStyle), text scaled
+    and outlined like a text bubble's."""
+    cell = wrap.find('mxCell')
+    eg = M.geo(cell)
+    if cell is None or eg is None:
+        warn.append(f"the element linked to combo {c['name']} on the '{cfg.combo_tab}' tab has no size")
+        return
+    cf = to_num(cfg.combo_val('scale')) / 100
+    rgb = CP.parse_rgb(cfg.combo_val('font'))
+    textop, oc = cfg.combo_val('textop'), cfg.combo_val('outline')
+
+    def dress(node, top):
+        st = node.get('style') or ''
+        if re.search(r'(^|;)image=', st):
+            if rgb is not None:
+                st, why = CP.recolor_image_style(st, rgb)
+                if why:
+                    warn.append(f"combo {c['name']}: {why} - left as drawn")
+            if textop != '':
+                st = M.style_set(st, 'opacity', textop)
+            node.set('style', st)
+        elif 'group' not in st.split(';'):
+            node.set('style', cap_combo_style(cfg, st))
+            if oc != '' and (node.get('value') or '') != '':
+                combo_outline(node, oc)
+        if abs(cf - 1) > 0.001:
+            g = node.find('mxGeometry')
+            for k in ('width', 'height') + (() if top else ('x', 'y')):
+                if g is not None and g.get(k) is not None:
+                    g.set(k, fmt4(to_num(g.get(k)) * cf))
+            st2 = node.get('style') or ''
+            if 'group' not in st2.split(';') and not re.search(r'(^|;)image=', st2):
+                cap_scale_text(node, cf)
+
+    def copy(scid, new_parent, depth):
+        for i, k in enumerate(src.children(scid)):
+            n = import_node(k)
+            nid = f'{new_parent}-{i}'
+            n.set('id', nid)
+            n.set('parent', new_parent)
+            n.set('value', CP.cell_label(k))
+            dress(n, False)
+            root.append(n)
+            if depth < 8:
+                copy(CP.cell_id(k), nid, depth + 1)
+
+    node = import_node(cell)
+    top_id = 'fg-c' + c['name']
+    node.set('id', top_id)
+    node.set('parent', 'fg')
+    node.set('value', wrap.get('label') or '')
+    dress(node, True)
+    ng = node.find('mxGeometry')
+    ng.set('x', fmt4(cx - eg['w'] * cf / 2))
+    ng.set('y', fmt4(cy - eg['h'] * cf / 2))
+    root.append(node)
+    copy(wrap.get('id'), top_id, 0)
+
+
 # ---------------------------------------------------------------- foreground
 def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
     """AddForeground: key borders, combo bubbles and combo lists into the 'fg' group."""
@@ -444,6 +509,7 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
     lists = {'LH': [], 'RH': []}
     have_keys = CB.have_key_data(layout)
     cmap = ctx.combo_map
+    links = CP.combo_links(src, cfg.combo_tab)          # .190: picture bubbles by their 'combo' property
     for c in layout['combos']:
         if not (L['idx'] in c['layers'] or -1 in c['layers']):
             continue
@@ -451,8 +517,9 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
         n = len(kp)
         if n < 2 or any(int(p) not in center for p in kp):
             continue
-        spec = cmap[c['name']] if c['name'] in cmap else combo_label_of(c)
-        if c.get('pairSwap'):
+        wrap = links.get(c['name'].lower())
+        spec = c['name'] if wrap is not None else cmap[c['name']] if c['name'] in cmap else combo_label_of(c)
+        if c.get('pairSwap') and wrap is None:
             spec = combo_pair_swap(cfg, spec)
         adjacent = False
         if n == 2:
@@ -466,10 +533,14 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
                 warn.append(f"layer {L['idx']} ({L['name']}): combo {c['name']} spans both hands but is "
                             f"labelled '{spec}' - clear its description if it is meant to be skipped")
                 continue
-            lists[side].append(combo_list_line(cfg, src, slots, c, spec, L, layout, have_keys, warn))
+            lists[side].append(combo_list_line(cfg, src, slots, c, spec, L, layout, have_keys, warn,
+                                               raw=wrap is not None))
             continue
         cx = sum(center[int(p)][0] for p in kp) / n
         cy = sum(center[int(p)][1] for p in kp) / n
+        if wrap is not None:                            # .190
+            add_picture_bubble(cfg, src, root, c, wrap, cx, cy, warn)
+            continue
         if spec == '':
             warn.append(f"{c['name']} has no description and no combo_map.ini entry")
             continue
