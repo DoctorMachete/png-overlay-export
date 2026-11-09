@@ -171,8 +171,21 @@ def pos_name(p):
 
 
 # -------------------------------------------------------------------- layers
+def page_layer_cell(root):
+    """PageLayerCell (.185): a page's layer cell, the child of its root cell - "0" in most
+    files, a random id on a page draw.io duplicated (the old @parent='0' found nothing there
+    and the grid fell back to 8 columns)."""
+    if root is None:
+        return None
+    c = sel1(root, "mxCell[@parent='0']")
+    if c is not None:
+        return c
+    r0 = sel1(root, "mxCell[not(@parent)]")
+    return sel1(root, f"mxCell[@parent={q(r0.get('id'))}]") if r0 is not None else None
+
+
 def layout_cols(doc):
-    c = sel1(doc.root, "//diagram[@name='background']/mxGraphModel/root/mxCell[@parent='0']")
+    c = page_layer_cell(sel1(doc.root, "//diagram[@name='background']/mxGraphModel/root"))   # .185
     v = style_get(c.get('style'), 'layoutCols', '') if c is not None else ''
     return int(v) if re.fullmatch(r'\s*\d+\s*', v or '') and 1 <= int(v) <= SLOT_MAX else 8
 
@@ -269,15 +282,55 @@ def discover(doc, warn, skipped=None):
     return [out[i] for i in sorted(out)]
 
 
-def index_keys(doc, gid):
-    """IndexKeys: the 60 key cells of a layer group in ZMK position order."""
-    rows = [[], [], [], []]
-    thumbs = {}
+_SHARED_X = {52, 78, 104, 315, 341, 367}   # columns where a row-4 key sits over an R5 key
+
+
+def thumb_ids(doc, gid):
+    """KeyThumbIds (.185): ids of the extra thumb keys of layer group gid, found by
+    place.  A key is a thumb at y >= 110 (as always, not listed) or when listed:
+    the lowest key-sized cell in a column shared by a row-4 key and an R5 key, at
+    least half a key (12.5) below the next one up, or a key below row 3 (y >= 76)
+    in a thumb-only column.  Cells without an id keep the height rule."""
+    cols, out = {}, set()
     for k in doc.children(gid):
         g = geo(k)
         if not is_key_size(g):
             continue
-        if g['y'] >= 110:
+        cols.setdefault(round_ahk(g['x']), []).append((g['y'], k.get('id') or ''))
+    for xk in THUMB_X:
+        lst = cols.get(xk)
+        if not lst:
+            continue
+        if xk in _SHARED_X:
+            lo = 0
+            for i, e in enumerate(lst):          # the first of equal lowest, as the script
+                if e[0] > lst[lo][0]:
+                    lo = i
+            nxt = None
+            for i, e in enumerate(lst):
+                if i != lo and (nxt is None or e[0] > nxt):
+                    nxt = e[0]
+            if nxt is not None and lst[lo][0] - nxt >= 12.5 and lst[lo][1]:
+                out.add(lst[lo][1])
+        else:
+            out.update(e[1] for e in lst if e[0] >= BAND[3][0] and e[1])
+    return out
+
+
+def is_thumb(g, k, extra):
+    return g['y'] >= 110 or (k.get('id') or '') in extra
+
+
+def index_keys(doc, gid):
+    """IndexKeys: the 60 key cells of a layer group in ZMK position order."""
+    rows = [[], [], [], []]
+    thumbs = {}
+    extra = thumb_ids(doc, gid)                # .185: thumbs by place too
+    for k in doc.children(gid):
+        g = geo(k)
+        if not is_key_size(g):
+            continue
+        if is_thumb(g, k, extra):
             thumbs[round_ahk(g['x'])] = k
             continue
         for i, b in enumerate(BAND):
@@ -370,13 +423,14 @@ def key_layout_problem(doc, gid):
     else the reason the layer is skipped (doubled, missing, wrong-size keys)."""
     rows = [[], [], [], []]
     thumbs, thumb_dup, wrong_list = {}, [], []
+    extra = thumb_ids(doc, gid)                # .185
     for k in doc.children(gid):
         g = geo(k)
         if not is_key_size(g):
             if is_keyish(g):
                 wrong_list.append((size_audit_label(g), f'{fmt_size(g["w"])}x{fmt_size(g["h"])}'))
             continue
-        if g['y'] >= 110:
+        if is_thumb(g, k, extra):
             xk = round_ahk(g['x'])
             if xk in thumbs:
                 thumb_dup.append(xk)
