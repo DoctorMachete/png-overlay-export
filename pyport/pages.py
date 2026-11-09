@@ -103,25 +103,32 @@ def set_html_text(html_val, new_text):
     return esc
 
 
-_L0_TITLES = [None, []]          # .188: [the source document, its layer 0 title cells]
+_L0 = [None, None]               # .188: [the source document, its layer 0 group]
+
+
+def layer0_group(src):
+    """Layer0Group (.189): the layer group on page-grid slot 0, found without reading its
+    keys; None when none.  Cached per source document."""
+    if _L0[0] is src:
+        return _L0[1]
+    found, pg = None, M.page_grid(src)
+    for grp in src.xpath("//diagram[@name='background']//mxCell[contains(@style,'group')]"):
+        g = M.geo(grp)
+        if M.is_layer_group_geo(g) and M.slot_of_group(g, pg) == 0:
+            found = grp
+            break
+    _L0[0], _L0[1] = src, found
+    return found
 
 
 def layer0_title_cells(src):
     """Layer0TitleCells (.188): layer 0's title cells in document order (the dark-red one, then
-    the light-grey highlight drawn above it) - the group on page-grid slot 0, found without
-    reading its keys; [] when none.  Cached per source document."""
-    if _L0_TITLES[0] is src:
-        return _L0_TITLES[1]
-    cells, pg = [], M.page_grid(src)
-    for grp in src.xpath("//diagram[@name='background']//mxCell[contains(@style,'group')]"):
-        g = M.geo(grp)
-        if not M.is_layer_group_geo(g) or M.slot_of_group(g, pg) != 0:
-            continue
-        cx = M.keys_mid_x(src, grp)
-        cells = [k for k in src.children(grp.get('id')) if is_centre_cell(k, cx)]
-        break
-    _L0_TITLES[0], _L0_TITLES[1] = src, cells
-    return cells
+    the light-grey highlight drawn above it); [] when there is no layer 0."""
+    grp = layer0_group(src)
+    if grp is None:
+        return []
+    cx = M.keys_mid_x(src, grp)
+    return [k for k in src.children(grp.get('id')) if is_centre_cell(k, cx)]
 
 
 def title_highlight(src, keep):
@@ -860,11 +867,19 @@ def build_page(cfg, ctx, path, L, layout, role, warn, src):
 
 
 # -------------------------------------------------------------------- legend
+def legend_width(src):
+    """.189: the width the legend group must have: layer 0's group's (444 without one)."""
+    g0 = layer0_group(src)
+    gg = M.geo(g0) if g0 is not None else None
+    return gg['w'] if gg is not None else GRP_W
+
+
 def legend_group(cfg, src):
-    """LegendGroup: the 444-wide group on the legend tab, or None."""
+    """LegendGroup: the group on the legend tab as wide as layer 0's (.189; was 444), or None."""
+    w0 = legend_width(src)
     for g in src.xpath('//diagram[@name=' + M.q(cfg.cs_legtab) + "]//mxCell[contains(@style,'group')]"):
         gg = M.geo(g)
-        if gg is not None and abs(gg['w'] - GRP_W) <= 1:
+        if gg is not None and abs(gg['w'] - w0) <= 1:
             return g
     return None
 

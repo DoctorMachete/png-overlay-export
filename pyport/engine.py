@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.18 (2025-07-30.148)'
+VERSION = 'py-0.2.19 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -503,8 +503,8 @@ def export(cfg, shapes, export_fn, ui, selected, recomp_all=False, all_run=False
             ui.say('Building cheat-sheet montage...', 99)
             need = any(c['legend'] for row in grid for c in row)
             if need and legend_png == '':
-                warn.append("cheat-sheet: a layer is starred for the legend overlay but no 444-wide group was "
-                            f"found on the '{cfg.cs_legtab}' tab")
+                warn.append("cheat-sheet: a layer is starred for the legend overlay but no group as wide as "
+                            f"layer 0's was found on the '{cfg.cs_legtab}' tab")
             cs_info = S.build_cheatsheet(cfg, grid, legend_png if need else '', warn)
 
     rl = LY.load_role_layers(cfg, osx)
