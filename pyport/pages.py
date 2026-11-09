@@ -364,8 +364,7 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
     center = {}
     cap_style = cfg.caps_like()
     cap_roles = LY.load_cap_roles(cfg, src, [])[0] if cap_style else {}
-    gg = M.geo(L['node'])
-    cap_mid = gg['w'] / 2 if gg else GRP_W / 2
+    cap_mid = M.keys_mid_x(src, L['node'])     # .186
     for p in range(60):
         cell = slots[p]
         g = M.geo(cell)
@@ -760,8 +759,7 @@ def build_page_doc(cfg, ctx, L, layout, role, warn, src):
         gg.set('x', vstr(MARGIN))
         gg.set('y', vstr(MARGIN))
         root.append(grp)
-        g0 = M.geo(L['node'])
-        centre_x = g0['w'] / 2 if g0 else GRP_W / 2
+        centre_x = M.keys_mid_x(src, L['node'])   # .186
         copy_subtree(src, root, L['id'], centre_x, False)
         if isinstance(L['idx'], int):
             strip_key_strokes(src, out, L['id'])
@@ -778,8 +776,7 @@ def build_page_doc(cfg, ctx, L, layout, role, warn, src):
     root.append(grp)
     add_foreground(cfg, ctx, src, root, L, layout,
                    cfg.combo_list_cs if role == 'cs' else cfg.combo_list_fg, warn)
-    gg = M.geo(L['node'])
-    centre_x = gg['w'] / 2 if gg else GRP_W / 2
+    centre_x = M.keys_mid_x(src, L['node'])     # .186
     for k in src.children(L['id']):
         if not is_centre_cell(k, centre_x):
             continue

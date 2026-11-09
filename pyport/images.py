@@ -99,8 +99,7 @@ def shadow_keys(cfg, doc, L, shapes, skip_trans=False, with_warp=False):
     its Render shape; + grid: its Legend 3D grid when with_warp)."""
     out = []
     roles = LY.load_cap_roles(cfg, doc, [])[0] if cfg.key_style == "render" else {}
-    gg = M.geo(L["node"])
-    centre_x = gg["w"] / 2 if gg else GRP_W / 2
+    centre_x = M.keys_mid_x(doc, L["node"])     # .186
     sils = {}
     for ki, key in enumerate(M.index_keys(doc, L["id"])):
         if M.eff_fill(doc, key) == "NONE":

@@ -221,7 +221,7 @@ def centre_crosses_x(g, cx):
 
 def title_cells_of(doc, grp):
     gg = geo(grp)
-    cx = gg['w'] / 2 if gg else GRP_W / 2
+    cx = keys_mid_x(doc, grp)                  # .186: the keys' middle
     cells = [k for k in doc.children(grp.get('id'))
              if (lambda gk: gk is not None and not is_key_size(gk) and centre_crosses_x(gk, cx))(geo(k))]
     # the script's bubble sort: stable, ascending y
@@ -245,7 +245,7 @@ def discover(doc, warn, skipped=None):
     pg = page_grid(doc)
     for grp in doc.xpath("//diagram[@name='background']//mxCell[contains(@style,'group')]"):
         g = geo(grp)
-        if g is None or abs(g['w'] - GRP_W) > 1:
+        if not is_layer_group_geo(g):          # .186: 200-444 wide
             continue
         gid = grp.get('id')
         idx = slot_of_group(g, pg)
@@ -282,71 +282,83 @@ def discover(doc, warn, skipped=None):
     return [out[i] for i in sorted(out)]
 
 
-_SHARED_X = {52, 78, 104, 315, 341, 367}   # columns where a row-4 key sits over an R5 key
+def is_layer_group_geo(g):
+    """IsLayerGroupGeo (.186): a layer group is 200 to 444 (+1) units wide."""
+    return g is not None and 200 <= g['w'] <= GRP_W + 1
 
 
-def thumb_ids(doc, gid):
-    """KeyThumbIds (.185): ids of the extra thumb keys of layer group gid, found by
-    place.  A key is a thumb at y >= 110 (as always, not listed) or when listed:
-    the lowest key-sized cell in a column shared by a row-4 key and an R5 key, at
-    least half a key (12.5) below the next one up, or a key below row 3 (y >= 76)
-    in a thumb-only column.  Cells without an id keep the height rule."""
-    cols, out = {}, set()
+def keys_mid_x(doc, grp):
+    """KeysMidX (.186): the layer's middle line - the middle of its key-sized cells' span
+    (222 on the 444 layout); the group's half width when it has none."""
+    ks = [g for g in (geo(k) for k in doc.children(grp.get('id'))) if is_key_size(g)]
+    if ks:
+        return (min(g['x'] for g in ks) + max(g['x'] + g['w'] for g in ks)) / 2
+    gg = geo(grp)
+    return gg['w'] / 2 if gg else GRP_W / 2
+
+
+_BOTTOM = ['C4R5', 'C3R5', 'C2R5', 'T1', 'T2', 'T3']
+
+
+def classify_keys(doc, gid):
+    """ClassifyKeys (.186): (60 cells in ZMK order, '') or (None, problem), by structure.
+    Per hand (left / right of the keys' middle) keys within 3 units of the next one's x make
+    a column; columns of 4+ are C1 (nearest the middle) .. C6, R1-R4 top to bottom; a 5th key
+    and keys in no column are the bottom cluster, from the outside in C4R5 C3R5 C2R5 T1 T2 T3.
+    Stable sorts, as the script's."""
+    keys, lo, hi = [], None, None
     for k in doc.children(gid):
         g = geo(k)
         if not is_key_size(g):
             continue
-        cols.setdefault(round_ahk(g['x']), []).append((g['y'], k.get('id') or ''))
-    for xk in THUMB_X:
-        lst = cols.get(xk)
-        if not lst:
-            continue
-        if xk in _SHARED_X:
-            lo = 0
-            for i, e in enumerate(lst):          # the first of equal lowest, as the script
-                if e[0] > lst[lo][0]:
-                    lo = i
-            nxt = None
-            for i, e in enumerate(lst):
-                if i != lo and (nxt is None or e[0] > nxt):
-                    nxt = e[0]
-            if nxt is not None and lst[lo][0] - nxt >= 12.5 and lst[lo][1]:
-                out.add(lst[lo][1])
-        else:
-            out.update(e[1] for e in lst if e[0] >= BAND[3][0] and e[1])
-    return out
-
-
-def is_thumb(g, k, extra):
-    return g['y'] >= 110 or (k.get('id') or '') in extra
+        keys.append({'k': k, 'cx': g['x'] + g['w'] / 2, 'y': g['y']})
+        lo = g['x'] if lo is None or g['x'] < lo else lo
+        hi = g['x'] + g['w'] if hi is None or g['x'] + g['w'] > hi else hi
+    dup = [f"x={round_ahk(a['cx'] - 12.5)} y={round_ahk(a['y'])}"
+           for i, a in enumerate(keys) for b in keys[i + 1:]
+           if abs(a['cx'] - b['cx']) < 3 and abs(a['y'] - b['y']) < 3]
+    if dup:
+        return None, 'doubled keys at ' + ', '.join(dup)
+    if len(keys) != 60:
+        return None, f'{len(keys)} key cells (expected 60)'
+    mid, by_pos = (lo + hi) / 2, {}
+    for hand, side in (('LH', -1), ('RH', 1)):
+        hk = [e for e in keys if (e['cx'] - mid) * side > 0]
+        if len(hk) != 30:
+            return None, f'{hand}: {len(hk)} keys (expected 30)'
+        hk.sort(key=lambda e: e['cx'])
+        clusters = [[hk[0]]]
+        for e in hk[1:]:
+            if e['cx'] - clusters[-1][-1]['cx'] > 3:
+                clusters.append([e])
+            else:
+                clusters[-1].append(e)
+        cols, bottom = [], []
+        for c in clusters:
+            c.sort(key=lambda e: e['y'])
+            if len(c) >= 4:
+                cols.append((abs(c[0]['cx'] - mid), c[:4]))
+                bottom += c[4:]
+            else:
+                bottom += c
+        if len(cols) != 6 or len(bottom) != 6:
+            return None, (f'{hand}: {len(cols)} column(s) of 4 keys and {len(bottom)} other key(s) '
+                          '(expected 6 and 6: keys in a column within 3 units of the same x)')
+        cols.sort(key=lambda c: c[0])
+        for ci, (_, c) in enumerate(cols, 1):
+            for ri, e in enumerate(c, 1):
+                by_pos[f'{hand}-C{ci}R{ri}'] = e['k']
+        bottom.sort(key=lambda e: abs(e['cx'] - mid), reverse=True)
+        for nm, e in zip(_BOTTOM, bottom):
+            by_pos[f'{hand}-{nm}'] = e['k']
+    return [by_pos[pos_name(i)] for i in range(60)], ''
 
 
 def index_keys(doc, gid):
-    """IndexKeys: the 60 key cells of a layer group in ZMK position order."""
-    rows = [[], [], [], []]
-    thumbs = {}
-    extra = thumb_ids(doc, gid)                # .185: thumbs by place too
-    for k in doc.children(gid):
-        g = geo(k)
-        if not is_key_size(g):
-            continue
-        if is_thumb(g, k, extra):
-            thumbs[round_ahk(g['x'])] = k
-            continue
-        for i, b in enumerate(BAND):
-            if b[0] <= g['y'] < b[1]:
-                rows[i].append({'x': g['x'], 'cell': k})
-                break
-    slots = []
-    for i, r in enumerate(rows, 1):
-        if len(r) != 12:
-            raise Die(f'Row {i} holds {len(r)} keys, expected 12.')
-        r.sort(key=lambda e: e['x'])          # the script's bubble sort is stable too
-        slots += [e['cell'] for e in r]
-    for x in THUMB_X:
-        if x not in thumbs:
-            raise Die(f'No thumb key at x={x}.')
-        slots.append(thumbs[x])
+    """IndexKeys: the 60 key cells of a layer group in ZMK position order (.186: by structure)."""
+    slots, problem = classify_keys(doc, gid)
+    if slots is None:
+        raise Die(f'The keys could not be read: {problem}.')
     return slots
 
 
@@ -419,63 +431,15 @@ def _dedupe(a):
 
 
 def key_layout_problem(doc, gid):
-    """KeyLayoutProblem: '' when the group holds exactly the 60 keys in place,
-    else the reason the layer is skipped (doubled, missing, wrong-size keys)."""
-    rows = [[], [], [], []]
-    thumbs, thumb_dup, wrong_list = {}, [], []
-    extra = thumb_ids(doc, gid)                # .185
-    for k in doc.children(gid):
-        g = geo(k)
-        if not is_key_size(g):
-            if is_keyish(g):
-                wrong_list.append((size_audit_label(g), f'{fmt_size(g["w"])}x{fmt_size(g["h"])}'))
-            continue
-        if is_thumb(g, k, extra):
-            xk = round_ahk(g['x'])
-            if xk in thumbs:
-                thumb_dup.append(xk)
-            thumbs[xk] = k
-            continue
-        for i, b in enumerate(BAND):
-            if b[0] <= g['y'] < b[1]:
-                rows[i].append(round_ahk(g['x']))
-                break
-    occupied = {label_for_row_x(i, kx) for i, r in enumerate(rows, 1) for kx in r}
-    occupied |= {f'thumb x={xk}' for xk in thumbs}
-    wrong, wrong_dup = {}, {}
-    for lbl, sz in wrong_list:
-        (wrong_dup if lbl in occupied else wrong)[lbl] = sz
-    bad, miss = [], []
-    for i, r in enumerate(rows, 1):
-        seen = set()
-        for kx in r:
-            if kx in seen:
-                bad.append(label_for_row_x(i, kx))
-            seen.add(kx)
-        for x in MAIN_COL_XS:
-            if x not in seen and label_for_row_x(i, x) not in wrong:
-                miss.append(label_for_row_x(i, x))
-    bad += [f'thumb x={xk}' for xk in thumb_dup]
-    miss += [f'thumb x={x}' for x in THUMB_X if x not in thumbs and f'thumb x={x}' not in wrong]
-    total = len(thumbs) + sum(len(r) for r in rows)
-    row_note = ', '.join(f'row {i} has {len(r)}' for i, r in enumerate(rows, 1) if len(r) != 12)
-    if not (bad or miss or wrong or wrong_dup) and total == 60 and row_note == '':
-        return ''
-    msg = []
-    if bad:
-        msg.append('doubled keys at ' + ', '.join(_dedupe(bad)))
-    if miss:
-        msg.append('missing keys at ' + ', '.join(_dedupe(miss)))
+    """KeyLayoutProblem (.186): '' when the group's 60 keys read by structure, else why not
+    (doubled keys, hand counts, wrong-size cells by coordinates)."""
+    wrong = [f"x={round_ahk(g['x'])} y={round_ahk(g['y'])} ({fmt_size(g['w'])}x{fmt_size(g['h'])})"
+             for g in (geo(k) for k in doc.children(gid)) if not is_key_size(g) and is_keyish(g)]
+    _, msg = classify_keys(doc, gid)
     if wrong:
-        msg.append('wrong-size keys at ' + ', '.join(f'{l} ({s})' for l, s in _ahk_map_order(wrong))
-                   + ' - resize to 25x25 (T3 25x37)')
-    if wrong_dup:
-        msg.append('off-spec duplicate keys at ' + ', '.join(f'{l} ({s})' for l, s in _ahk_map_order(wrong_dup))
-                   + ' - a wrong-size cell stacked on a good key; delete the off-spec one')
-    out = '; '.join(msg)
-    if total != 60:
-        out += ('; ' if out else '') + f'{total} key cells (expected 60)' + (f' - {row_note}' if row_note else '')
-    return out
+        msg += ('; ' if msg else '') + ('wrong-size key cells at ' + ', '.join(wrong)
+                                         + ' - resize to 25x25 (T3 25x37), or delete one stacked on a good key')
+    return msg
 
 
 def valid_layer_groups(doc):
@@ -484,7 +448,7 @@ def valid_layer_groups(doc):
     out = []
     for grp in doc.xpath("//diagram[@name='background']//mxCell[contains(@style,'group')]"):
         g = geo(grp)
-        if g is None or abs(g['w'] - GRP_W) > 1:
+        if not is_layer_group_geo(g):          # .186: 200-444 wide
             continue
         idx = slot_of_group(g, pg)
         if idx < 0:

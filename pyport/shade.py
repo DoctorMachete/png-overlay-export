@@ -48,8 +48,7 @@ def render_items(cfg, doc, L, which='caps'):
     if which == 'rings' and not cfg.render_ring:
         return []
     roles = LY.load_cap_roles(cfg, doc, [])[0]
-    gg = M.geo(L['node'])
-    centre_x = gg['w'] / 2 if gg else M.GRP_W / 2
+    centre_x = M.keys_mid_x(doc, L['node'])     # .186
     out = []
     for ki, key in enumerate(M.index_keys(doc, L['id'])):
         if M.eff_fill(doc, key) == 'NONE':
