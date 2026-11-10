@@ -481,11 +481,14 @@ def draw_items(dst, items, kx, ky, P, shapes, ox=0.0, oy=0.0):
 # tall, the face dished DISH units) and, per pixel of a cap, the horizon its NEIGHBOURS raise
 # (the cap's own samples are skipped) in AO_DIRS directions out to AO_RADIUS units: the mean
 # sine of that horizon, fading with distance, is the occlusion.  Worked out at up to AO_K px per
-# unit and scaled up; the layout's strength (times AO_GAIN) multiplies it; the cap's colour is darkened by it in
+# unit and scaled up; the layout's strength sets it through a soft curve (AO_GAIN / AO_DMAX); the cap's colour is darkened by it in
 # linear light.  Off (strength 0): never called.  Cached by the caps' geometry (every layer has
 # layer 0's key places, so most layers share one map).
-CAP_H, DISH, AO_RADIUS, AO_DIRS, AO_STEPS, AO_K, AO_FLOOR = 11.0, 0.8, 9.0, 16, 14, 3.0, 0.15
-AO_GAIN = 2.0          # strength 1 / 2 = the mock-up's 1x / 2x (§82)
+CAP_H, DISH, AO_RADIUS, AO_DIRS, AO_STEPS, AO_K = 11.0, 0.8, 9.0, 16, 14, 3.0
+# v0.2.27: soft response - darkening = Dm * tanh(AO_GAIN * s * occ / Dm), Dm = AO_DMAX * s, so it
+# saturates at 17 / 34 / 51 % (s = 1 / 2 / 3) instead of clipping to near black; the map is also
+# blurred AO_SOFT units at page size, so the base of a flank fades instead of a hard rim (§83)
+AO_GAIN, AO_DMAX, AO_SOFT = 3.5, 0.17, 0.8
 _ao_cache = {}
 
 
@@ -574,7 +577,8 @@ def ao_occlusion(items, kx, ky, P, shapes, W, H):
         occ = cv2.GaussianBlur(occ * on, (0, 0), 0.6 * k) * on
     if (Wa, Ha) != (W, H):
         occ = cv2.resize(occ, (W, H), interpolation=cv2.INTER_LINEAR)
-    occ = (occ * full).astype(np.float32)
+    occ = occ * full
+    occ = (cv2.GaussianBlur(occ, (0, 0), AO_SOFT * kx) * full).astype(np.float32)     # v0.2.27
     if len(_ao_cache) >= 4:
         _ao_cache.clear()
     _ao_cache[sig] = occ
@@ -584,7 +588,8 @@ def ao_occlusion(items, kx, ky, P, shapes, W, H):
 def apply_ao(dst, items, kx, ky, P, shapes, strength):
     """dst (premultiplied float RGBA) darkened by the occlusion times strength, in linear light."""
     occ = ao_occlusion(items, kx, ky, P, shapes, dst.shape[1], dst.shape[0])
-    f = np.clip(1 - strength * AO_GAIN * occ, AO_FLOOR, 1) ** (1 / 2.2)
+    dm = AO_DMAX * strength
+    f = (1 - dm * np.tanh(AO_GAIN * strength * occ / dm)) ** (1 / 2.2)            # v0.2.27
     dst[..., :3] *= f[..., None]
 
 
