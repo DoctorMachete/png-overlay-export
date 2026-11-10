@@ -489,7 +489,7 @@ CAP_H, DISH, AO_RADIUS, AO_DIRS, AO_STEPS, AO_K = 11.0, 0.8, 9.0, 16, 14, 3.0
 # saturates at 17 / 34 / 51 % (s = 1 / 2 / 3) instead of clipping to near black; the map is also
 # blurred AO_SOFT units at page size, so the base of a flank fades instead of a hard rim (§83)
 AO_GAIN, AO_DMAX, AO_SOFT = 3.5, 0.17, 0.8
-AO_SCALE = 2 / 3          # v0.2.28: the user's 3 = v0.2.27's 2 (tuned down, §84)
+AO_SCALE = 4 / 9          # v0.2.29: the user's 3 = v0.2.28's 2 = v0.2.27's 1.33 (§84, §85)
 _ao_cache = {}
 
 
