@@ -427,6 +427,14 @@ def add_picture_bubble(cfg, src, root, c, wrap, cx, cy, warn):
     cf = to_num(cfg.combo_val('scale')) / 100
     rgb = CP.parse_rgb(cfg.combo_val('font'))
     textop, oc = cfg.combo_val('textop'), cfg.combo_val('outline')
+    # v0.2.25 (.193): a blank layout colour / text opacity means "as drawn" for the bubble's
+    # text, so the picture takes the bubble's own fontColor / textOpacity, like the text
+    if rgb is None or textop == '':
+        own_font, own_op = CP.own_text(src, cell, wrap_id)
+        if rgb is None:
+            rgb = CP.parse_rgb(own_font)
+        if textop == '':
+            textop = own_op
 
     def dress(node, top):
         st = node.get('style') or ''

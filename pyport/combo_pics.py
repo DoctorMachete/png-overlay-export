@@ -95,6 +95,38 @@ def bubble_root(src, tab, wrap):
     return cell, cid, label
 
 
+def own_text(src, cell, cid):
+    """v0.2.25 (.193): (fontColor, textOpacity) of a picture bubble's own bubble - the first cell
+    that is neither a group nor a picture, the top cell first, then its cells in document order
+    (depth first); with none, the top cell's own (a single picture cell).  '' where unset."""
+    def pick(c):
+        st = c.get('style') or ''
+        return (M.style_get(st, 'fontColor', ''), M.style_get(st, 'textOpacity', ''))
+
+    def is_img(c):
+        return re.search(r'(^|;)image=', c.get('style') or '') is not None
+
+    def walk(c, i, depth):
+        if not _is_group(c) and not is_img(c):
+            return pick(c)
+        if depth < 8:
+            for k in src.children(i):
+                r = walk(k, cell_id(k), depth + 1)
+                if r is not None:
+                    return r
+        return None
+
+    if cell is None:
+        return '', ''
+    r = walk(cell, cid, 0)
+    if r is None:
+        r = pick(cell) if not _is_group(cell) else ('', '')
+    font, op = r
+    if font.lower() in ('none', 'default'):
+        font = ''
+    return font, op
+
+
 def cell_label(cell):
     p = cell.getparent()
     if p is not None and p.tag in _WRAP:
