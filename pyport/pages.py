@@ -323,18 +323,19 @@ def key_label_for(cfg, slots, p, c, L, layout, have_keys, warn):
     return short_pos_name(p)
 
 
-def combo_list_label(cfg, src, spec):
-    el = find_combo_element(cfg, src, spec)
+def combo_list_label(cfg, src, spec, el=None):
+    if el is None:
+        el = find_combo_element(cfg, src, spec)
     if el is None:
         return spec
     t = M.plain_text(el).strip()
     return t if t else spec
 
 
-def combo_list_line(cfg, src, slots, c, spec, L, layout, have_keys, warn, raw=False):
+def combo_list_line(cfg, src, slots, c, spec, L, layout, have_keys, warn, raw=False, el=None):
     line = ' + '.join(key_label_for(cfg, slots, int(p), c, L, layout, have_keys, warn)
                       for p in sorted(c['keyPositions']))
-    return line + ' ' + COMBO_ARROW + ' ' + (spec if raw else combo_list_label(cfg, src, spec))   # .190: raw
+    return line + ' ' + COMBO_ARROW + ' ' + (spec if raw else combo_list_label(cfg, src, spec, el))   # .190: raw; .193: el
 
 
 def find_combo_list_element(cfg, src):
@@ -518,9 +519,19 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
         if n < 2 or any(int(p) not in center for p in kp):
             continue
         spec = cmap[c['name']] if c['name'] in cmap else combo_label_of(c)
-        wrap = CP.find_link(links, spec)                 # .192: by map entry / description, as text bubbles
-        if c.get('pairSwap') and wrap is None:
-            spec = combo_pair_swap(cfg, spec)
+        # .192/.193: the 'combo' property, matched like a text bubble's text, wins; on mirrored
+        # layers the swapped identifier first, then the original one
+        wrap = None
+        if c.get('pairSwap'):
+            sw = combo_pair_swap(cfg, spec)
+            wrap = CP.find_link(links, sw)
+            if wrap is not None or CP.find_link(links, spec) is None:
+                spec = sw
+        if wrap is None:
+            wrap = CP.find_link(links, spec)
+        tcell = CP.text_cell(src, cfg.combo_tab, wrap) if wrap is not None else None
+        if tcell is not None:                             # .193: a linked text bubble = a text bubble
+            wrap = None
         adjacent = False
         if n == 2:
             a, b = center[int(kp[0])], center[int(kp[1])]
@@ -534,7 +545,7 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
                             f"labelled '{spec}' - clear its description if it is meant to be skipped")
                 continue
             lists[side].append(combo_list_line(cfg, src, slots, c, spec, L, layout, have_keys, warn,
-                                               raw=wrap is not None))
+                                               raw=wrap is not None, el=tcell))
             continue
         cx = sum(center[int(p)][0] for p in kp) / n
         cy = sum(center[int(p)][1] for p in kp) / n
@@ -544,7 +555,7 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
         if spec == '':
             warn.append(f"{c['name']} has no description and no combo_map.ini entry")
             continue
-        el = find_combo_element(cfg, src, spec)
+        el = tcell if tcell is not None else find_combo_element(cfg, src, spec)
         if el is None:
             warn.append(f"nothing on the '{cfg.combo_tab}' tab matches '{spec}' for {c['name']} - draw it, "
                         'or add an override to combo_map.ini')

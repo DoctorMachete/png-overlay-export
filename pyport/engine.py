@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.23 (2025-07-30.148)'
+VERSION = 'py-0.2.24 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting

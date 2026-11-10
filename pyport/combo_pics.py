@@ -15,8 +15,10 @@ _CACHE = [None, None, None]              # [source document, combo tab name, {na
 
 
 def link_key(s):
-    """.192: how a 'combo' value and what it is matched with are compared: case and spaces ignored."""
-    return re.sub(r'\s+', '', s or '').lower()
+    """.193: how a 'combo' value and a combo's description are compared: exactly like a text
+    bubble's text (pages.norm_text: characters sorted, spaces and NBSP dropped, case kept -
+    "( {" = "{ (", unicode symbols as they are)."""
+    return ''.join(sorted((s or '').replace('\u00a0', '').replace(' ', '')))
 
 
 def find_link(links, spec):
@@ -25,6 +27,23 @@ def find_link(links, spec):
     with text bubbles).  None when not linked."""
     k = link_key(spec)
     return links.get(k) if k else None
+
+
+def text_cell(src, tab, wrap):
+    """.193: when the linked element is a plain text bubble (one cell, not grouped, no picture):
+    a copy of its cell carrying the wrapper's label as its value, so it is placed exactly like a
+    text bubble found by its text.  None for picture bubbles / groups."""
+    cell, _, label = bubble_root(src, tab, wrap)
+    if cell is None or cell.getparent() is not wrap:
+        return None
+    st = cell.get('style') or ''
+    if _is_group(cell) or re.search(r'(^|;)image=', st):
+        return None
+    import copy as _copy
+    c = _copy.deepcopy(cell)
+    c.tail = None
+    c.set('value', label)
+    return c
 
 
 def combo_links(src, tab):
