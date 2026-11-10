@@ -23,7 +23,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.25 (2025-07-30.148)'
+VERSION = 'py-0.2.26 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -181,7 +181,7 @@ class Run:
         finally:
             cfg.cap_glass_nobg = False
         if role == 'bg' and cfg.key_style == 'render':
-            out = SH.shade_raw(cfg, self.shapes, IM.load(raw), SH.render_items(cfg, src, L, 'caps'))
+            out = SH.shade_raw(cfg, self.shapes, IM.load(raw), SH.render_items(cfg, src, L, 'caps'), True)
             if out is None:
                 return False
             IM.save(out, raw)

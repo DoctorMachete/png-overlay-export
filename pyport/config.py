@@ -22,7 +22,7 @@ LAY_DEF = {"TextUp": "0",
            "CapBadgeTop": "", "CapBadgeBottom": "", "CapBadgeBorder": "", "CapBadgeOpacity": "100",
            "CapBadgeRadius": "", "CapBadgeDepth": "60", "CapBadgeOutline": "0",
            "RenderLight": "lamp", "RenderShape": "real", "RenderShading": "100", "RenderHighlights": "100",
-           "RenderKeyText": "", "RenderRings": "1"}
+           "RenderKeyText": "", "RenderRings": "1", "RenderAO": "0"}
 LAY_GROUPS = [
     ("textup", "drawio caps render", ["TextUp"]),
     ("caps", "caps render", ["CapEdgeOnTop", "CapDish", "CapDishVariation", "CapLegendShape", "CapGlass",
@@ -33,7 +33,7 @@ LAY_GROUPS = [
     ("combos", "drawio caps render", ["ComboArc", "ComboOpacity", "ComboFill", "ComboScale", "ComboFont",
                                       "ComboTextOpacity", "ComboBorder", "ComboOutline"]),
     ("render", "render", ["RenderLight", "RenderShape", "RenderShading", "RenderHighlights",
-                          "RenderKeyText", "RenderRings"]),
+                          "RenderKeyText", "RenderRings", "RenderAO"]),
     ("pos", "render", [])]
 
 
@@ -85,6 +85,7 @@ class Cfg:
         self.title_pad_b = first_num(r("render", "TitlePadB", "0"), 0)
         self.chips_follow = first_num(r("render", "ChipsFollowRoles", "0"), 0) != 0
         self.render_inset = _opt(r("render", "RenderEdgeInset", "0.5"), 0, 3, "0.5")
+        self.render_ao = "0"                 # v0.2.26: the layout's RenderAO (layout.lay_apply)
         self.out_folder = {st: sfx_clean(r("export", "Folder" + st.title(), d))
                            for st, d in (("drawio", "classic"), ("caps", "svg"), ("render", "render"))}
         self.capmodel_dir = os.path.join(self.base_dir, "capmodels")

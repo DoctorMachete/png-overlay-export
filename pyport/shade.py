@@ -99,9 +99,11 @@ def legend_item(cfg, r, x, y, w, h, rot):
                 edge=lk['edgeOwn'], fill=lk['fill'], grad=lk['grad'], dir=lk['dir'], shape=shp)
 
 
-def shade_raw(cfg, shapes, raw, items):
+def shade_raw(cfg, shapes, raw, items, ao=False):
     """RenderShade on a raw (uint8 RGBA array): the shaded copy, the raw itself when there is
-    nothing to shade, or None when the raw is not the size the page frame promises."""
+    nothing to shade, or None when the raw is not the size the page frame promises.
+    v0.2.26: ao = a layer's background - with the layout's ambient occlusion (RenderAO)."""
     if not items:
         return raw
-    return RS.render_shade(raw, items, Params(cfg), shapes, cfg.scale)
+    k = to_num(cfg.render_ao) if ao else 0.0
+    return RS.render_shade(raw, items, Params(cfg), shapes, cfg.scale, k)

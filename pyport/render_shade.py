@@ -476,8 +476,121 @@ def draw_items(dst, items, kx, ky, P, shapes, ox=0.0, oy=0.0):
             blend(sub, spr)
 
 
-def render_shade(raw_rgba, items, P, shapes, scale):
-    """RenderShade: the raw (uint8 RGBA) with the shading drawn on, or None if it is not the frame's size."""
+# ------------------------------------------------- v0.2.26: ambient occlusion
+# A height field of the page's caps (each rises from its outline to its top face, CAP_H units
+# tall, the face dished DISH units) and, per pixel of a cap, the horizon its NEIGHBOURS raise
+# (the cap's own samples are skipped) in AO_DIRS directions out to AO_RADIUS units: the mean
+# sine of that horizon, fading with distance, is the occlusion.  Worked out at up to AO_K px per
+# unit and scaled up; the layout's strength (times AO_GAIN) multiplies it; the cap's colour is darkened by it in
+# linear light.  Off (strength 0): never called.  Cached by the caps' geometry (every layer has
+# layer 0's key places, so most layers share one map).
+CAP_H, DISH, AO_RADIUS, AO_DIRS, AO_STEPS, AO_K, AO_FLOOR = 11.0, 0.8, 9.0, 16, 14, 3.0, 0.15
+AO_GAIN = 2.0          # strength 1 / 2 = the mock-up's 1x / 2x (§82)
+_ao_cache = {}
+
+
+def _item_polys(it, kx, ky, P, shapes, ox=0.0, oy=0.0):
+    """An item's outline and top face in page pixels, placed exactly as draw_items places it."""
+    a = shapes.asset(it['shape'])
+    pw = it['w'] * kx * it.get('mfx', 1); ph = it['h'] * ky * it.get('mfy', 1)
+    cx = (it['x'] + FRAME_PAD + it['w'] / 2) * kx - ox + it.get('mdx', 0)
+    cy = (it['y'] + FRAME_PAD + it['h'] / 2) * ky - oy + it.get('mdy', 0)
+    r = it['rot'] * D2R; ca, sa = math.cos(r), math.sin(r); mx = -1.0 if it['mir'] else 1.0
+    ins = P.inset
+    fx = max(0, pw - 2 * ins) / pw if pw else 1; fy = max(0, ph - 2 * ins) / ph if ph else 1
+
+    def tr(pts):
+        q = np.array([((p[0] / 25 - 0.5) * pw * fx, (p[1] / 25 - 0.5) * ph * fy) for p in pts], np.float64)
+        return np.stack([cx + q[:, 0] * mx * ca - q[:, 1] * sa, cy + q[:, 0] * mx * sa + q[:, 1] * ca], 1)
+    return tr(a['sil']), tr(a['dish'])
+
+
+def ao_occlusion(items, kx, ky, P, shapes, W, H):
+    """The occlusion (H x W float32, 0..1, 0 off the caps) the caps cast on one another."""
+    sig = (W, H, round(kx, 4), round(ky, 4), P.inset,
+           tuple((it['shape'], round(it['x'], 3), round(it['y'], 3), round(it['w'], 3), round(it['h'], 3),
+                  round(it['rot'], 3), bool(it['mir']), round(it.get('mfx', 1), 4), round(it.get('mfy', 1), 4),
+                  round(it.get('mdx', 0), 3), round(it.get('mdy', 0), 3)) for it in items if not it.get('ring')))
+    if sig in _ao_cache:
+        return _ao_cache[sig]
+    k = min(kx, AO_K)                           # px per unit of the AO grid
+    s = k / kx
+    Wa, Ha = max(1, int(math.ceil(W * s))), max(1, int(math.ceil(H * s)))
+    hgt = np.zeros((Ha, Wa), np.float32)
+    lab = np.zeros((Ha, Wa), np.int32)
+    full = np.zeros((H, W), np.uint8)           # the caps at page size (where AO may darken)
+    n = 0
+    for it in items:
+        if it.get('ring'):
+            continue
+        ps, pd = _item_polys(it, kx, ky, P, shapes)
+        cv2.fillPoly(full, [np.round(ps * 16).astype(np.int32)], 1, cv2.LINE_8, 4)
+        ps, pd = ps * s, pd * s
+        x0, y0 = max(0, int(ps[:, 0].min()) - 2), max(0, int(ps[:, 1].min()) - 2)
+        x1, y1 = min(Wa, int(ps[:, 0].max()) + 3), min(Ha, int(ps[:, 1].max()) + 3)
+        if x0 >= x1 or y0 >= y1:
+            continue
+        o = np.array([x0, y0], np.float64)
+        m = np.zeros((y1 - y0, x1 - x0), np.uint8)
+        f = np.zeros_like(m)
+        cv2.fillPoly(m, [np.round((ps - o) * 16).astype(np.int32)], 1, cv2.LINE_8, 4)
+        cv2.fillPoly(f, [np.round((pd - o) * 16).astype(np.int32)], 1, cv2.LINE_8, 4)
+        f &= m
+        if not m.any():
+            continue
+        mp, fp = np.pad(m, 1), np.pad(f, 1)        # an outline at the box edge still has an edge
+        d_edge = cv2.distanceTransform(mp, cv2.DIST_L2, 5)[1:-1, 1:-1] / k
+        d_out = cv2.distanceTransform(1 - fp, cv2.DIST_L2, 5)[1:-1, 1:-1] / k
+        d_in = cv2.distanceTransform(fp, cv2.DIST_L2, 5)[1:-1, 1:-1] / k
+        flank = np.clip(d_edge / np.maximum(d_edge + d_out, 1e-6), 0, 1)
+        h = np.where(f > 0, CAP_H - DISH * np.clip(d_in / 6, 0, 1),
+                     CAP_H * np.sin(flank * math.pi / 2) ** 0.8).astype(np.float32)
+        n += 1
+        sub_h, sub_l = hgt[y0:y1, x0:x1], lab[y0:y1, x0:x1]
+        put = (m > 0) & (h >= sub_h)
+        sub_h[put] = h[put]
+        sub_l[put] = n
+    occ = np.zeros((Ha, Wa), np.float32)
+    on = lab > 0
+    if n:
+        for di in range(AO_DIRS):
+            t = (di + 0.5) / AO_DIRS * 2 * math.pi
+            ux, uy = math.cos(t), math.sin(t)
+            best = np.zeros((Ha, Wa), np.float32)
+            for st in range(1, AO_STEPS + 1):
+                r = AO_RADIUS * (st / AO_STEPS) ** 1.3          # denser near the pixel
+                A = np.float32([[1, 0, ux * r * k], [0, 1, uy * r * k]])
+                hs = cv2.warpAffine(hgt, A, (Wa, Ha), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                ls = cv2.warpAffine(lab.astype(np.float32), A, (Wa, Ha),
+                                    flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP,
+                                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                rise = (hs - hgt) / r
+                sn = np.clip(rise / np.sqrt(1 + rise * rise), 0, 1) * (1 - (r / AO_RADIUS) ** 2)
+                sn[ls == lab] = 0                                # the cap's own samples
+                np.maximum(best, sn, out=best)
+            occ += best
+        occ /= AO_DIRS
+        occ = cv2.GaussianBlur(occ * on, (0, 0), 0.6 * k) * on
+    if (Wa, Ha) != (W, H):
+        occ = cv2.resize(occ, (W, H), interpolation=cv2.INTER_LINEAR)
+    occ = (occ * full).astype(np.float32)
+    if len(_ao_cache) >= 4:
+        _ao_cache.clear()
+    _ao_cache[sig] = occ
+    return occ
+
+
+def apply_ao(dst, items, kx, ky, P, shapes, strength):
+    """dst (premultiplied float RGBA) darkened by the occlusion times strength, in linear light."""
+    occ = ao_occlusion(items, kx, ky, P, shapes, dst.shape[1], dst.shape[0])
+    f = np.clip(1 - strength * AO_GAIN * occ, AO_FLOOR, 1) ** (1 / 2.2)
+    dst[..., :3] *= f[..., None]
+
+
+def render_shade(raw_rgba, items, P, shapes, scale, ao=0.0):
+    """RenderShade: the raw (uint8 RGBA) with the shading drawn on, or None if it is not the frame's size.
+    v0.2.26: ao > 0 = ambient occlusion at that strength after the shading (Render backgrounds)."""
     h, w = raw_rgba.shape[:2]
     kx, ky = w / (GRP_W + 2 * FRAME_PAD), h / (GRP_H + 2 * FRAME_PAD)
     if abs(kx - scale) > scale * 0.03 or abs(ky - scale) > scale * 0.03:
@@ -485,6 +598,8 @@ def render_shade(raw_rgba, items, P, shapes, scale):
     measure(raw_rgba[..., 3].astype(np.float64), items, kx, ky, shapes)
     dst = premul(raw_rgba)
     draw_items(dst, items, kx, ky, P, shapes)
+    if ao > 0:
+        apply_ao(dst, items, kx, ky, P, shapes, ao)
     a = dst[..., 3:4]
     out = np.where(a > 1e-6, dst[..., :3] / np.maximum(a, 1e-6), 0)
     return np.clip(np.concatenate([out, a], -1) * 255 + 0.5, 0, 255).astype(np.uint8)

@@ -149,6 +149,7 @@ def lay_apply(cfg, lay):
     cfg.render_hilite = lay_num(lay["RenderHighlights"], 0, 200, "100")
     cfg.render_text = cap_opt_num(lay["RenderKeyText"], 20, 150)
     cfg.render_ring = first_num(lay["RenderRings"], 1) != 0
+    cfg.render_ao = lay_num(lay.get("RenderAO", "0"), 0, 3, "0")      # v0.2.26 (.194)
     cfg.cap_pos, cfg.lay_roles = lay["pos"], lay["roles"]
     return cfg
 
@@ -470,7 +471,8 @@ def render_style_tag(cfg, shapes):
         tag = ("render/" + tag[5:] + "/" + cfg.render_light + "/" + cfg.render_shape + "/" + cfg.render_shade
                + "/" + cfg.render_hilite + "/t" + _s(render_text_factor(cfg, shapes)) + "/r3"
                + ("" if cfg.render_ring else "/nr") + ("" if cfg.render_inset == "0.5" else "/i" + cfg.render_inset)
-               + "/fc" + ("/cm" + cap_pos_sig(cfg) if cfg.cap_pos else ""))
+               + "/fc" + ("/cm" + cap_pos_sig(cfg) if cfg.cap_pos else "")
+               + ("/ao" + cfg.render_ao if to_num(cfg.render_ao) > 0 else ""))      # .194
     if cfg.key_style != "render" and cfg.cap_glass != "none":
         tag += "/gl:" + cfg.cap_glass + ":" + cfg.cap_glass_k + ":r" + ("" if cfg.cap_glass_bg else ":nobg")
     tu = cfg.text_up_val()
