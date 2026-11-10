@@ -489,6 +489,7 @@ CAP_H, DISH, AO_RADIUS, AO_DIRS, AO_STEPS, AO_K = 11.0, 0.8, 9.0, 16, 14, 3.0
 # saturates at 17 / 34 / 51 % (s = 1 / 2 / 3) instead of clipping to near black; the map is also
 # blurred AO_SOFT units at page size, so the base of a flank fades instead of a hard rim (§83)
 AO_GAIN, AO_DMAX, AO_SOFT = 3.5, 0.17, 0.8
+AO_SCALE = 2 / 3          # v0.2.28: the user's 3 = v0.2.27's 2 (tuned down, §84)
 _ao_cache = {}
 
 
@@ -588,6 +589,7 @@ def ao_occlusion(items, kx, ky, P, shapes, W, H):
 def apply_ao(dst, items, kx, ky, P, shapes, strength):
     """dst (premultiplied float RGBA) darkened by the occlusion times strength, in linear light."""
     occ = ao_occlusion(items, kx, ky, P, shapes, dst.shape[1], dst.shape[0])
+    strength = strength * AO_SCALE                                             # v0.2.28
     dm = AO_DMAX * strength
     f = (1 - dm * np.tanh(AO_GAIN * strength * occ / dm)) ** (1 / 2.2)            # v0.2.27
     dst[..., :3] *= f[..., None]
