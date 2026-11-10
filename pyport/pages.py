@@ -517,8 +517,10 @@ def add_foreground(cfg, ctx, src, root, L, layout, list_on, warn):
         n = len(kp)
         if n < 2 or any(int(p) not in center for p in kp):
             continue
-        wrap = links.get(c['name'].lower())
-        spec = c['name'] if wrap is not None else cmap[c['name']] if c['name'] in cmap else combo_label_of(c)
+        spec = cmap[c['name']] if c['name'] in cmap else combo_label_of(c)
+        wrap, matched = CP.find_link(links, c, spec)     # .192: by name, else by map entry / description
+        if wrap is not None:
+            spec = matched                               # the list box shows what linked it
         if c.get('pairSwap') and wrap is None:
             spec = combo_pair_swap(cfg, spec)
         adjacent = False

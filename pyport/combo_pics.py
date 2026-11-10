@@ -14,15 +14,32 @@ _WRAP = ('object', 'UserObject')
 _CACHE = [None, None, None]              # [source document, combo tab name, {name: wrapper}]
 
 
+def link_key(s):
+    """.192: how a 'combo' value and what it is matched with are compared: case and spaces ignored."""
+    return re.sub(r'\s+', '', s or '').lower()
+
+
+def find_link(links, c, spec):
+    """.192: (element linked to combo c, the value that matched) - by its name, else by its spec
+    (combo_map.ini entry, or the description up to '~~~': the text a text bubble is matched by);
+    (None, '') when neither is linked."""
+    w = links.get(link_key(c['name']))
+    if w is not None:
+        return w, c['name']
+    if link_key(spec) != '' and link_key(spec) in links:
+        return links[link_key(spec)], spec
+    return None, ''
+
+
 def combo_links(src, tab):
-    """{combo name (lower case): the object / UserObject on the combos tab whose 'combo' property
-    lists it}; the first one wins.  Cached per source document."""
+    """{link_key(value): the object / UserObject on the combos tab whose 'combo' property lists
+    it}; the first one wins.  Cached per source document."""
     if _CACHE[0] is src and _CACHE[1] == tab:
         return _CACHE[2]
     out = {}
     for o in src.xpath('//diagram[@name=' + M.q(tab) + ']//*[self::object or self::UserObject][@combo]'):
         for n in (o.get('combo') or '').split(','):
-            n = n.strip().lower()
+            n = link_key(n)
             if n and n not in out:
                 out[n] = o
     _CACHE[0], _CACHE[1], _CACHE[2] = src, tab, out
