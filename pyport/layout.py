@@ -149,7 +149,7 @@ def lay_apply(cfg, lay):
     cfg.render_hilite = lay_num(lay["RenderHighlights"], 0, 200, "100")
     cfg.render_text = cap_opt_num(lay["RenderKeyText"], 20, 150)
     cfg.render_ring = first_num(lay["RenderRings"], 1) != 0
-    cfg.render_ao = lay_num(lay.get("RenderAO", "0"), 0, 3, "0")      # v0.2.26 (.194)
+    cfg.render_ao = lay_num(lay.get("RenderAO", "0"), 0, 5, "0")      # v0.2.26 (.194); v0.2.30 (.195): to 5
     cfg.cap_pos, cfg.lay_roles = lay["pos"], lay["roles"]
     return cfg
 
