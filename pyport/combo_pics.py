@@ -19,16 +19,12 @@ def link_key(s):
     return re.sub(r'\s+', '', s or '').lower()
 
 
-def find_link(links, c, spec):
-    """.192: (element linked to combo c, the value that matched) - by its name, else by its spec
-    (combo_map.ini entry, or the description up to '~~~': the text a text bubble is matched by);
-    (None, '') when neither is linked."""
-    w = links.get(link_key(c['name']))
-    if w is not None:
-        return w, c['name']
-    if link_key(spec) != '' and link_key(spec) in links:
-        return links[link_key(spec)], spec
-    return None, ''
+def find_link(links, spec):
+    """.192: the element linked to a combo through its spec - its combo_map.ini entry, else its
+    description up to '~~~': the same text a text bubble is matched by (never the ZMK name, as
+    with text bubbles).  None when not linked."""
+    k = link_key(spec)
+    return links.get(k) if k else None
 
 
 def combo_links(src, tab):
