@@ -913,7 +913,7 @@ def build_page_doc(cfg, ctx, L, layout, role, warn, src):
                 key_text_shift(src, out, L['id'], tu)
             label_fractions(src, out, L['id'])       # .165: the fractions draw.io drops
         import capkeys as CK
-        CK.apply_effects(out, warn)                  # v0.2.31 (.198): effects= on any label
+        CK.apply_effects(out, warn)                  # v0.2.31 (.198): overlay_export_effects= on any label
         ctx.fonts.normalise(out, set())
         return out
     grp = make_cell('fg', '1', 'group;fillColor=none;', '', MARGIN, MARGIN, GRP_W, GRP_H)

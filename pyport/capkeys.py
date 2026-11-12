@@ -699,19 +699,21 @@ def cap_emboss_text(cell, raised, bp):
 
 
 # ------------------------------------------------- v0.2.31 (.198): the effects style key
+# v0.2.32 (.199): named overlay_export_effects / overlay_export_effects_depth (not draw.io's own)
 EFFECTS = ('emboss', 'deboss')
 
 
 def cell_effects(style):
-    """The effects named by a cell's style key effects= (Edit Style: effects=deboss;), lower
+    """The effects named by a cell's style key overlay_export_effects= (Edit Style:
+    overlay_export_effects=deboss;), lower
     case, in order; [] without one.  Several may be listed, comma or space separated."""
-    v = M.style_get(style or '', 'effects', '').strip().lower()
+    v = M.style_get(style or '', 'overlay_export_effects', '').strip().lower()
     return [t for t in re.split(r'[,\s]+', v) if t] if v not in ('', 'none') else []
 
 
 def apply_effects(out, warn):
-    """Every cell of the page whose style has effects=: its own text embossed / debossed (the
-    badges' text-shadow, depth effectsDepth %, default 60).  Only the cell's own text - cells
+    """Every cell of the page whose style has overlay_export_effects=: its own text embossed /
+    debossed (the badges' text-shadow, depth overlay_export_effects_depth %, default 60).  Only the cell's own text - cells
     grouped on it keep theirs; a cell without text is left alone.  A plain-text label is made
     HTML first (escaped, line breaks kept).  Unknown names are reported once."""
     import html as _h
@@ -722,13 +724,13 @@ def apply_effects(out, warn):
             continue
         for e in effs:
             if e not in EFFECTS:
-                msg = 'effects=' + e + ' is not known (emboss, deboss) - ignored'
+                msg = 'overlay_export_effects=' + e + ' is not known (emboss, deboss) - ignored'
                 if msg not in warn:
                     warn.append(msg)
         known = [e for e in effs if e in EFFECTS]
         if not known or M.plain_text(c) == '':
             continue
-        dv = M.style_get(st, 'effectsDepth', '')
+        dv = M.style_get(st, 'overlay_export_effects_depth', '')
         d = max(0.0, min(1.0, to_num(dv) / 100)) if is_number(dv) else 0.6
         v = c.get('value') or ''
         if M.style_get(st, 'html', '') != '1':
