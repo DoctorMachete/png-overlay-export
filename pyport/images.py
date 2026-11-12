@@ -49,10 +49,23 @@ def to_u8(f):
 
 
 def over_u8(base, top):
-    """Gdip.Draw of top 1:1 onto base (source-over, linear light)."""
-    dst = to_f(base)
-    blend(dst, to_f(top))
-    return to_u8(dst)
+    """Gdip.Draw of top 1:1 onto base (source-over, linear light).  v0.2.33: in 8 bits where the
+    result is one of the two pixels (top empty: base; top opaque or base empty: top - the float
+    round trip gives those bytes back unchanged), the float blend only on the pixels where a
+    partly transparent top meets a drawn base.  Same bytes as converting both whole images."""
+    ta, da = top[..., 3], base[..., 3]
+    m = ta > 0
+    out = base.copy()
+    if not m.any():
+        return out
+    plain = m & ((ta == 255) | (da == 0))
+    out[plain] = top[plain]
+    mix = m & ~plain
+    if mix.any():
+        d = to_f(base[mix])
+        blend(d, to_f(top[mix]))
+        out[mix] = to_u8(d)
+    return out
 
 
 def fill_coverage(polys, w, h, ss=4):
