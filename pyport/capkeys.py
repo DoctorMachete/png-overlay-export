@@ -682,14 +682,60 @@ def cap_text_move(cell, dx, dy):
     cell.set('style', st)
 
 
+def emboss_shadow(raised, d):
+    """The text-shadow of embossed (raised) / debossed text at depth d (0..1) (v0.2.31: shared
+    by badges and the effects style key)."""
+    hi, sh = 'rgba(255,255,255,' + f3(0.85 * d) + ')', 'rgba(0,0,0,' + f3(0.6 * d) + ')'
+    return ('-0.3px -0.3px 0.1px ' + hi + ', 0.35px 0.35px 0.25px ' + sh if raised
+            else '0.3px 0.3px 0.1px ' + hi + ', -0.3px -0.3px 0.2px ' + sh)
+
+
 def cap_emboss_text(cell, raised, bp):
     d = to_num(bp['depth']) / 100 if is_number(bp['depth']) else 0.6
-    hi, sh = 'rgba(255,255,255,' + f3(0.85 * d) + ')', 'rgba(0,0,0,' + f3(0.6 * d) + ')'
-    ts = ('-0.3px -0.3px 0.1px ' + hi + ', 0.35px 0.35px 0.25px ' + sh if raised
-          else '0.3px 0.3px 0.1px ' + hi + ', -0.3px -0.3px 0.2px ' + sh)
+    ts = emboss_shadow(raised, d)
     cell.set('value', '<div style="text-shadow: ' + ts + '">' + (cell.get('value') or '') + '</div>')
     if bp['top'] != '':
         cell.set('style', M.style_set(cell.get('style') or '', 'fontColor', bp['top']))
+
+
+# ------------------------------------------------- v0.2.31 (.198): the effects style key
+EFFECTS = ('emboss', 'deboss')
+
+
+def cell_effects(style):
+    """The effects named by a cell's style key effects= (Edit Style: effects=deboss;), lower
+    case, in order; [] without one.  Several may be listed, comma or space separated."""
+    v = M.style_get(style or '', 'effects', '').strip().lower()
+    return [t for t in re.split(r'[,\s]+', v) if t] if v not in ('', 'none') else []
+
+
+def apply_effects(out, warn):
+    """Every cell of the page whose style has effects=: its own text embossed / debossed (the
+    badges' text-shadow, depth effectsDepth %, default 60).  Only the cell's own text - cells
+    grouped on it keep theirs; a cell without text is left alone.  A plain-text label is made
+    HTML first (escaped, line breaks kept).  Unknown names are reported once."""
+    import html as _h
+    for c in out.iter('mxCell'):
+        st = c.get('style') or ''
+        effs = cell_effects(st)
+        if not effs:
+            continue
+        for e in effs:
+            if e not in EFFECTS:
+                msg = 'effects=' + e + ' is not known (emboss, deboss) - ignored'
+                if msg not in warn:
+                    warn.append(msg)
+        known = [e for e in effs if e in EFFECTS]
+        if not known or M.plain_text(c) == '':
+            continue
+        dv = M.style_get(st, 'effectsDepth', '')
+        d = max(0.0, min(1.0, to_num(dv) / 100)) if is_number(dv) else 0.6
+        v = c.get('value') or ''
+        if M.style_get(st, 'html', '') != '1':
+            v = _h.escape(v, quote=False).replace('\n', '<br>')
+            st = M.style_set(st, 'html', '1')
+            c.set('style', st)
+        c.set('value', '<div style="text-shadow: ' + emboss_shadow(known[0] == 'emboss', d) + '">' + v + '</div>')
 
 
 def _out_cell(out, cid):
@@ -715,7 +761,7 @@ def cap_badge(cfg, out, bd, face, badge, mode):
         gn.set('height', fmt4(fit[3]))
     if abs(tf - 1) > 0.001:
         cap_scale_text(bc, tf)
-    if cfg.cap_badge in ('emboss', 'deboss'):
+    if cfg.cap_badge in ('emboss', 'deboss') and not cell_effects(bc.get('style')):    # v0.2.31: its own wins
         cap_emboss_text(bc, cfg.cap_badge == 'emboss', LY.cap_badge_params(cfg))
     bst = bc.get('style') or ''
     bg = M.geo(bc)

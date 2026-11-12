@@ -912,6 +912,8 @@ def build_page_doc(cfg, ctx, L, layout, role, warn, src):
             if tu != 0:
                 key_text_shift(src, out, L['id'], tu)
             label_fractions(src, out, L['id'])       # .165: the fractions draw.io drops
+        import capkeys as CK
+        CK.apply_effects(out, warn)                  # v0.2.31 (.198): effects= on any label
         ctx.fonts.normalise(out, set())
         return out
     grp = make_cell('fg', '1', 'group;fillColor=none;', '', MARGIN, MARGIN, GRP_W, GRP_H)
@@ -940,6 +942,8 @@ def build_page_doc(cfg, ctx, L, layout, role, warn, src):
             tt = M.plain_text(c).strip()
             if tt:
                 c.set('value', set_html_text(c.get('value') or '', mirror_title(tt)))
+    import capkeys as CK
+    CK.apply_effects(out, warn)                      # v0.2.31 (.198)
     ctx.fonts.normalise(out, {c.get('id') for c in title_cells})
     return out
 
