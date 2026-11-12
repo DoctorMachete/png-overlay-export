@@ -118,6 +118,9 @@ class Cfg:
         self.backup_layers = layer_spec_norm(r("export", "BackupLayers", "0-31"))
         self.mosaic_sheet = r("export", "MosaicSheet", "0").strip() == "1"
         self.debug_export = r("export", "Debug", "0").strip() == "1"
+        # v0.2.34 (.200): the page cache (pagecache.py); PageCache=0 off, PageCacheMB its size cap
+        self.page_cache = r("export", "PageCache", "1").strip() != "0"
+        self.page_cache_mb = max(50, int(first_num(r("export", "PageCacheMB", "1000"), 1000)))
         self.mirror_pairs = pairs_decode(r("export", "MirrorPairs", "( ) [ ] { } < >").strip())
         self.grid_cols = max(1, min(SLOT_MAX, round(first_num(r("layout", "Columns", "8"), 8))))
         # the layout's globals (LayApply sets them; these are the values before any layout)

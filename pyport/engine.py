@@ -15,7 +15,8 @@ merged preview, and calls this for the rest).
 --result: JSON {ok, message, line, warnings, images, mirrored}.  Exit 0 = done, 2 = stopped
        with a message (Die), 1 = crashed.
 """
-import argparse, json, math, os, shutil, sys, time, traceback
+import argparse, json, math, os, re, shutil, sys, time, traceback
+import pagecache as PC                                  # v0.2.34
 from lxml import etree
 
 import config, model as M, layout as LY, pages as P, combos as CB, mirror as MR
@@ -23,7 +24,7 @@ import images as IM, render_shade as RS, shade as SH, keys as K, legend3d as L3,
 import capkeys as CK
 from util import to_num
 
-VERSION = 'py-0.2.33 (2025-07-30.148)'
+VERSION = 'py-0.2.34 (2025-07-30.148)'
 
 
 # ---------------------------------------------------------------- reporting
@@ -32,6 +33,7 @@ class Progress:
     (log_path, appended; for finding where a run spends its time)."""
     def __init__(self, path=None, log_path=None):
         self.path, self.t0, self.logf = path, time.time(), None
+        self.drawn = self.cached = 0                     # v0.2.34: draw.io pages drawn / from the page cache
         if log_path:
             try:
                 self.logf = open(log_path, 'w', encoding='utf-8', buffering=1)
@@ -40,6 +42,10 @@ class Progress:
                 self.logf = None
 
     def log(self, text):
+        if re.search(r'\bdraw\.io +\d', text):
+            self.drawn += 1
+        elif 'from page cache' in text:
+            self.cached += 1
         if self.logf:
             try:
                 self.logf.write(f'{time.time() - self.t0:8.2f}  {text}\n')
@@ -86,6 +92,7 @@ class Exporter:
     def __init__(self, cfg, drawio, log=None):
         self.cfg, self.drawio, self.r, self.n = cfg, drawio, None, 0
         self.log = log or (lambda t: None)
+        self.env = None                                  # v0.2.34: the page cache's environment tag
 
     def __call__(self, page, out_png, label=''):
         import drawio_helper as DH
@@ -93,6 +100,20 @@ class Exporter:
         if self.cfg.debug_export:
             with open(out_png[:-4] + '.drawio', 'w', encoding='utf-8') as f:
                 f.write(xml)
+        k = None
+        if self.cfg.page_cache and PC.cacheable(xml):    # v0.2.34: an unchanged page isn't drawn again
+            if self.env is None:
+                try:
+                    self.env = PC.env_tag(self.drawio)
+                except Exception as e:                   # noqa: BLE001 - no cache, the run goes on
+                    self.env = False
+                    self.log(f'    page cache off for this process: {type(e).__name__}: {e}')
+            if self.env:
+                k = PC.key(xml, self.cfg.scale, True, self.env)
+                if PC.get(k, out_png):
+                    self.log(f'    from page cache  {os.path.basename(out_png)}  ({label})')
+                    self.n += 1
+                    return
         err = None
         for attempt in range(2):                         # one plain retry, as TryExportPng
             try:
@@ -107,6 +128,8 @@ class Exporter:
                 with open(tmp, 'wb') as f:
                     f.write(png)
                 os.replace(tmp, out_png)
+                if k:
+                    PC.put(k, png)
                 self.n += 1
                 return
             except Exception as e:                       # noqa: BLE001 - reported below
@@ -628,6 +651,7 @@ def main(argv=None):
     e.add_argument('--layout', required=True)
     e.add_argument('--layers', required=True)
     e.add_argument('--recomp', action='store_true')
+    e.add_argument('--clear-page-cache', action='store_true')        # v0.2.34 (.200)
     e.add_argument('--all-run', action='store_true')
     e.add_argument('--last', action='store_true')
     e.add_argument('--last-bak', default='')
@@ -663,9 +687,19 @@ def main(argv=None):
         spec = {'ini': os.path.abspath(a.ini), 'base': base, 'ahk': os.path.abspath(a.ahk), 'layout': a.layout,
                 'drawio': drawio, 'test_arial': sorted(FN.NOT_COVERED.get('Helvetica', ()))}
         ui.log(f'workers: {nw}')
+        if a.clear_page_cache:                           # v0.2.34: before any page is looked up
+            ui.log(f'page cache cleared ({PC.clear()} pages)')
+        elif not cfg.page_cache:
+            ui.log('page cache off ([export] PageCache=0)')
         msg, line, warn, total, mir, used = export(cfg, shapes, exporter, ui, sel, a.recomp,
                                              a.all_run, a.last or not a.all_run, a.last_bak, a.label,
                                              (a.result, a.progress), nw, spec)
+        if cfg.page_cache:                               # v0.2.34
+            left, mb = PC.prune(cfg.page_cache_mb)
+            ui.log(f'page cache: {ui.cached} page(s) reused, {ui.drawn} drawn; {left} pages, {mb:.0f} MB kept')
+            if ui.cached:
+                msg += (f'\n\nPage cache: {ui.cached} of {ui.cached + ui.drawn} draw.io page(s) reused '
+                        '(unchanged since an earlier run).')
         res.update(ok=True, message=msg, line=line, warnings=warn, images=total, mirrored=mir, workers=used)
     except M.Die as d:
         res['message'], code = str(d), 2
