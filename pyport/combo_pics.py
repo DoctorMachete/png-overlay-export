@@ -158,12 +158,76 @@ def _alpha_of(tok):
     return ''
 
 
+_TAG_RX = re.compile(r'(?s)<!--.*?-->|<!\[CDATA\[.*?\]\]>|<(/?)([A-Za-z][\w:.-]*)'
+                     r'((?:[^>"\']|"[^"]*"|\'[^\']*\')*?)(/?)>')
+_KEEP_RX = re.compile(r'(?is)<(mask|clipPath)\b.*?</\1\s*>')
+
+
+def _own_paint(attrs, prop):
+    """fill / stroke / color set on the element itself (style wins over the attribute), or ''."""
+    v = ''
+    m = re.search(r'(?i)(?<![\w-])' + prop + r'\s*=\s*(["\'])(.*?)\1', attrs)
+    if m:
+        v = m.group(2).strip()
+    st = re.search(r'(?i)\sstyle\s*=\s*(["\'])(.*?)\1', attrs)
+    if st:
+        c = re.search(r'(?i)(?<![\w-])' + prop + r'\s*:\s*([^;]+)', st.group(2))
+        if c:
+            v = c.group(1).strip()
+    return v
+
+
+def freeze_mask_paint(svg):
+    """v0.2.35 (.205), the Color Changer 2.6 rule: a mask's shapes inherit fill / stroke / color
+    from the mask's parents (often stroke="currentColor" on the root); recolouring those parents
+    would change what the mask hides.  So each <mask> gets its ORIGINAL inherited paint written
+    onto it (the SVG defaults: fill black, stroke none, color black) before recolouring."""
+    if not re.search(r'(?i)<mask\b', svg):
+        return svg
+    stack = [{'fill': 'black', 'stroke': 'none', 'color': 'black'}]
+    out, pos = [], 0
+    for m in _TAG_RX.finditer(svg):
+        if not m.group(2) or m.group(1) == '/':           # comment, CDATA, closing tag
+            if m.group(1) == '/' and len(stack) > 1:
+                stack.pop()
+            continue
+        attrs, up, tag = m.group(3), stack[-1], m.group(0)
+        col, fill, stroke = _own_paint(attrs, 'color'), _own_paint(attrs, 'fill'), _own_paint(attrs, 'stroke')
+        if col == '' or col.lower() in ('inherit', 'currentcolor'):
+            col = up['color']
+        cur = {'color': col, 'fill': fill or up['fill'], 'stroke': stroke or up['stroke']}
+        if m.group(2).lower() == 'mask':
+            add = ''
+            for prop in ('fill', 'stroke'):
+                if _own_paint(attrs, prop) == '':
+                    v = up[prop]
+                    if v.lower() == 'currentcolor':
+                        v = up['color']
+                    if '"' not in v:
+                        add += ' %s="%s"' % (prop, v)
+            if _own_paint(attrs, 'color') == '' and '"' not in up['color']:
+                add += ' color="%s"' % up['color']
+            tag = '<' + m.group(2) + attrs + add + m.group(4) + '>'
+        if m.group(4) != '/':
+            stack.append(cur)
+        out.append(svg[pos:m.start()] + tag)
+        pos = m.end()
+    out.append(svg[pos:])
+    return ''.join(out)
+
+
 def recolor_svg(svg, rgb):
     """Every colour of the SVG -> rgb (0xRRGGBB), 'none' / url() etc. kept, alpha parts kept;
-    a root without fill gets fill=rgb (shapes without a fill are black)."""
+    a root without fill gets fill=rgb (shapes without a fill are black).  v0.2.35: colours inside
+    <mask> / <clipPath> say what is shown or hidden, not what is seen - left as they are, after
+    each mask got its inherited paint written onto it (freeze_mask_paint)."""
     hexc = '#%06x' % rgb
+    svg = freeze_mask_paint(svg)
+    keep = [(k.start(), k.end()) for k in _KEEP_RX.finditer(svg)]
 
     def rep(m):
+        if any(a <= m.start() < b for a, b in keep):
+            return m.group(0)
         tok = m.group(2)
         low = tok.lower()
         if low in _SKIP:
