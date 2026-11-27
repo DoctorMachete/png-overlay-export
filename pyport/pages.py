@@ -406,6 +406,9 @@ def add_combo_lists(cfg, src, root, L, slots, lists, layout, have_keys, warn):
         node.set('id', 'fg-list-' + side)
         node.set('parent', 'fg')
         node.set('value', html)
+        node.set('style', cap_combo_style(cfg, node.get('style') or ''))   # v0.2.36 (.206): combo style
+        if cfg.combo_val('outline') != '':
+            combo_outline(node, cfg.combo_val('outline'))
         ng = node.find('mxGeometry')
         ng.set('x', vstr(float(x)))
         ng.set('y', vstr(float(y)))
